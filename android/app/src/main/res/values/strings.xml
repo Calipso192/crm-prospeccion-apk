@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">CRM Prospeccion</string>
-    <string name="title_activity_main">CRM Prospeccion</string>
+    <string name="app_name">CRM BLAP</string>
+    <string name="title_activity_main">CRM BLAP</string>
     <string name="package_name">com.crmprospeccion.app</string>
     <string name="custom_url_scheme">com.crmprospeccion.app</string>
 </resources>
