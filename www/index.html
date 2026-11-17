@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <title>CRM Prospección Local-First</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="styles/variables.css">
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/features.css">
+  <link rel="stylesheet" href="styles/dashboard.css">
+</head>
+<body>
+  <header class="top-bar">
+    <div class="brand">
+      <h1>CRM Prospección</h1>
+      <span id="lead-counter" class="badge">0 prospectos</span>
+      <span id="revenue-counter" class="badge badge-revenue">S/ 0.00</span>
+    </div>
+    <div class="header-actions">
+      <button id="btn-backup" class="btn-secondary" type="button">Respaldo</button>
+      <button id="btn-manage-templates" class="btn-secondary" type="button">Mensajes</button>
+      <button id="btn-new-lead" class="btn-primary" type="button">+ Nuevo</button>
+    </div>
+    <div class="view-tabs" role="tablist" aria-label="Vistas principales">
+      <button id="tab-dashboard" class="view-tab-btn active" type="button" role="tab">Dashboard</button>
+      <button id="tab-leads" class="view-tab-btn" type="button" role="tab">Contactos</button>
+    </div>
+    <div class="search-bar">
+      <input type="search" id="search-input" placeholder="Buscar por nombre o número..." autocomplete="off">
+      <button id="btn-clear-search" class="btn-secondary btn-compact hidden" type="button">Limpiar</button>
+    </div>
+  </header>
+
+  <main id="dashboard-view" class="app-container dashboard-grid" aria-live="polite"></main>
+
+  <div id="leads-view" class="hidden">
+    <nav class="filter-bar" aria-label="Filtros de etapa">
+      <button class="filter-chip active" data-filter="todos" type="button">Todos</button>
+      <button class="filter-chip" data-filter="nuevo" type="button">Nuevos</button>
+      <button class="filter-chip" data-filter="contactado" type="button">Contactados</button>
+      <button class="filter-chip" data-filter="seguimiento" type="button">Seguimiento</button>
+      <button class="filter-chip" data-filter="vendido" type="button">Vendidos</button>
+      <button class="filter-chip" data-filter="descartado" type="button">Descartados</button>
+      <button class="filter-chip" data-filter="sin_whatsapp" type="button">Sin WhatsApp</button>
+    </nav>
+
+    <section class="campaign-bar" aria-label="Filtros por rubro, interés y plantilla">
+      <div class="campaign-selects">
+        <select id="rubro-filter" aria-label="Filtrar por rubro">
+          <option value="todos">Todos los rubros</option>
+          <option value="gastronomia">Gastronomía</option>
+          <option value="barberia">Barbería y Belleza</option>
+          <option value="veterinaria">Veterinaria y Mascotas</option>
+          <option value="comercio">Tienda y Comercio</option>
+          <option value="servicios">Servicios y Otros</option>
+        </select>
+        <select id="interest-filter" aria-label="Filtrar por etiqueta de interés">
+          <option value="todas">Todas las etiquetas de interés</option>
+        </select>
+        <select id="campaign-tpl-filter" aria-label="Filtrar por plantilla">
+          <option value="todas">Todas las plantillas</option>
+        </select>
+      </div>
+      <div id="campaign-status-row" class="campaign-state-chips hidden">
+        <button type="button" class="camp-chip active" data-camp-state="pendiente">Pendiente por enviar</button>
+        <button type="button" class="camp-chip" data-camp-state="enviado">Enviado</button>
+      </div>
+    </section>
+
+    <div class="app-container">
+      <div id="queue-filter-banner" class="queue-banner hidden">
+        <span id="queue-filter-text" class="queue-banner-text">Cola activa</span>
+        <button id="btn-clear-queue-filter" class="btn-secondary btn-compact" type="button">Quitar filtro</button>
+      </div>
+      <section id="leads-list" class="leads-grid" aria-live="polite"></section>
+    </div>
+  </div>
+
+  <div id="bulk-selection-bar" class="bulk-bar hidden" role="region" aria-label="Acciones de selección múltiple">
+    <div class="bulk-bar-top">
+      <span id="bulk-sel-count" class="bulk-count-badge">0 seleccionados</span>
+      <div class="bulk-top-btns">
+        <button id="btn-bulk-sel-all" class="btn-secondary btn-compact" type="button">Todos</button>
+        <button id="btn-bulk-sel-cancel" class="btn-secondary btn-compact" type="button">Salir</button>
+      </div>
+    </div>
+    <div class="bulk-bar-actions">
+      <button id="btn-bulk-sel-tag" class="btn-primary btn-compact" type="button">+ Fase</button>
+      <button id="btn-bulk-sel-rubro" class="btn-secondary btn-compact" type="button">+ Rubro</button>
+      <button id="btn-bulk-sel-status" class="btn-secondary btn-compact" type="button">Etapa</button>
+    </div>
+  </div>
+
+  <div id="lead-form-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-scroll">
+      <h2 id="form-title">Registrar Prospecto</h2>
+      <p id="form-feedback" class="backup-feedback hidden"></p>
+      <form id="lead-form">
+        <input type="hidden" id="lead-id">
+        <div class="field-group">
+          <label for="lead-name">Nombre o Negocio</label>
+          <input type="text" id="lead-name" required placeholder="Ej. Cafetería Central">
+        </div>
+        <div class="field-group">
+          <label for="lead-phone">Teléfono (con código país)</label>
+          <input type="tel" id="lead-phone" required placeholder="Ej. 51987654321">
+        </div>
+        <div class="field-group">
+          <label for="lead-rubro">Rubro del Negocio</label>
+          <select id="lead-rubro">
+            <option value="">Sin especificar</option>
+            <option value="gastronomia">Gastronomía</option>
+            <option value="barberia">Barbería y Belleza</option>
+            <option value="veterinaria">Veterinaria y Mascotas</option>
+            <option value="comercio">Tienda y Comercio</option>
+            <option value="servicios">Servicios y Otros</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="lead-status">Estado en Embudo</label>
+          <select id="lead-status">
+            <option value="nuevo">Nuevo</option>
+            <option value="contactado">Contactado</option>
+            <option value="seguimiento">Seguimiento</option>
+            <option value="vendido">Vendido</option>
+            <option value="descartado">Descartado</option>
+            <option value="sin_whatsapp">Sin WhatsApp</option>
+          </select>
+        </div>
+        <div id="sale-amount-group" class="field-group hidden">
+          <label for="lead-amount">Monto de venta (S/)</label>
+          <input type="number" id="lead-amount" min="0" step="0.01" placeholder="Ej. 150.00">
+        </div>
+        <div class="field-group">
+          <label>Recordatorio agendado</label>
+          <div class="form-reminder-row">
+            <span id="form-reminder-preview" class="cal-preview">Sin recordatorio</span>
+            <button id="btn-form-open-reminder" class="btn-calendar btn-compact" type="button">Agendar</button>
+          </div>
+        </div>
+        <div class="field-group">
+          <label for="lead-notes">Notas base del negocio</label>
+          <div id="note-shortcuts" class="quick-chips">
+            <button type="button" class="chip-action" data-note="Pide info y precios">+ Info</button>
+            <button type="button" class="chip-action" data-note="Enviar demo">+ Demo</button>
+            <button type="button" class="chip-action" data-note="Hablar con dueño">+ Dueño</button>
+            <button type="button" class="chip-action" data-note="Llamar más tarde">+ Llamar luego</button>
+            <button type="button" class="chip-action" data-note="Interesado en promo">+ Promo</button>
+            <button type="button" class="chip-action" data-note="Sin presupuesto ahora">+ Sin presupuesto</button>
+          </div>
+          <textarea id="lead-notes" rows="3" placeholder="Detalle del interés o acuerdo..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button id="btn-cancel-form" class="btn-secondary" type="button">Cancelar</button>
+          <button class="btn-primary" type="submit">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="reminder-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-scroll">
+      <div class="modal-header-row">
+        <h3>Agendar Seguimiento</h3>
+        <button id="btn-clear-calendar" class="btn-secondary btn-compact hidden" type="button">Quitar</button>
+      </div>
+      <p id="reminder-lead-label" class="helper-hint"></p>
+      <div class="scheduler-box">
+        <p id="cal-selected-preview" class="cal-preview">Sin fecha seleccionada</p>
+
+        <span class="scheduler-sublabel">Atajo rápido hoy (en horas)</span>
+        <div id="cal-quick-hours" class="quick-chips">
+          <button type="button" class="chip-action" data-hours-ahead="1">En 1 hora</button>
+          <button type="button" class="chip-action" data-hours-ahead="2">En 2 horas</button>
+          <button type="button" class="chip-action" data-hours-ahead="4">En 4 horas</button>
+        </div>
+
+        <span class="scheduler-sublabel">1. Elige el día</span>
+        <div id="cal-day-chips" class="quick-chips"></div>
+        <div class="custom-date-row">
+          <label for="cal-custom-date">Otra fecha:</label>
+          <input type="date" id="cal-custom-date">
+        </div>
+
+        <span class="scheduler-sublabel">2. Elige la hora</span>
+        <div id="cal-hour-chips" class="quick-chips">
+          <button type="button" class="chip-action" data-hour="9">09:00</button>
+          <button type="button" class="chip-action" data-hour="10">10:00</button>
+          <button type="button" class="chip-action" data-hour="11">11:00</button>
+          <button type="button" class="chip-action" data-hour="12">12:00</button>
+          <button type="button" class="chip-action" data-hour="15">15:00</button>
+          <button type="button" class="chip-action" data-hour="16">16:00</button>
+          <button type="button" class="chip-action" data-hour="17">17:00</button>
+          <button type="button" class="chip-action" data-hour="18">18:00</button>
+        </div>
+        <div id="cal-minute-chips" class="quick-chips">
+          <button type="button" class="chip-action active" data-minute="0">:00 en punto</button>
+          <button type="button" class="chip-action" data-minute="30">:30 media hora</button>
+        </div>
+
+        <span class="scheduler-sublabel">3. Motivo del recordatorio</span>
+        <div id="cal-reason-chips" class="quick-chips">
+          <button type="button" class="chip-action" data-reason="Cerrar venta">Cerrar venta</button>
+          <button type="button" class="chip-action" data-reason="Retomar contacto">Retomar contacto</button>
+          <button type="button" class="chip-action" data-reason="Enviar demo">Enviar demo</button>
+          <button type="button" class="chip-action" data-reason="Confirmar pedido">Confirmar pedido</button>
+          <button type="button" class="chip-action" data-reason="Llamar por teléfono">Llamar</button>
+        </div>
+        <input type="text" id="cal-reason-input" placeholder="Ej. Confirmar venta del viernes...">
+
+        <button id="btn-form-calendar" class="btn-calendar btn-full" type="button">Sincronizar con Google Calendar</button>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-close-reminder" class="btn-secondary" type="button">Cancelar</button>
+        <button id="btn-save-reminder" class="btn-primary" type="button">Guardar Agenda</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rubro-picker-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="rubro-picker-title">Asignar Rubro</h3>
+      <p id="rubro-picker-subtitle" class="helper-hint"></p>
+      <div id="rubro-picker-options" class="modal-stack-actions">
+        <button type="button" class="rubro-choice-btn rubro-gastronomia" data-rubro="gastronomia">Gastronomía</button>
+        <button type="button" class="rubro-choice-btn rubro-barberia" data-rubro="barberia">Barbería y Belleza</button>
+        <button type="button" class="rubro-choice-btn rubro-veterinaria" data-rubro="veterinaria">Veterinaria y Mascotas</button>
+        <button type="button" class="rubro-choice-btn rubro-comercio" data-rubro="comercio">Tienda y Comercio</button>
+        <button type="button" class="rubro-choice-btn rubro-servicios" data-rubro="servicios">Servicios y Otros</button>
+        <button type="button" class="btn-secondary" data-rubro="">Quitar rubro</button>
+      </div>
+      <div class="modal-stack-actions">
+        <button id="btn-rubro-picker-cancel" class="btn-danger" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="quick-status-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="quick-status-title">Mover prospecto</h3>
+      <p id="quick-status-lead-name" class="helper-hint"></p>
+      <div id="quick-status-options" class="quick-status-grid">
+        <button type="button" class="status-choice-btn status-nuevo" data-target-status="nuevo">Nuevo</button>
+        <button type="button" class="status-choice-btn status-contactado" data-target-status="contactado">Contactado</button>
+        <button type="button" class="status-choice-btn status-seguimiento" data-target-status="seguimiento">Seguimiento</button>
+        <button type="button" class="status-choice-btn status-vendido" data-target-status="vendido">Vendido</button>
+        <button type="button" class="status-choice-btn status-descartado" data-target-status="descartado">Descartado</button>
+        <button type="button" class="status-choice-btn status-sin_whatsapp" data-target-status="sin_whatsapp">Sin WhatsApp</button>
+      </div>
+      <div id="quick-sale-box" class="new-template-box hidden">
+        <label for="quick-sale-amount">Monto vendido (S/ - opcional)</label>
+        <input type="number" id="quick-sale-amount" min="0" step="0.01" placeholder="Ej. 150.00">
+        <button id="btn-confirm-quick-sale" class="btn-whatsapp btn-full" type="button">Confirmar Venta</button>
+      </div>
+      <div class="modal-stack-actions">
+        <button id="btn-close-quick-status" class="btn-secondary" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="custom-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="modal-title">Confirmación</h3>
+      <p id="modal-message"></p>
+      <div class="modal-actions">
+        <button id="modal-btn-cancel" class="btn-secondary" type="button">Cancelar</button>
+        <button id="modal-btn-confirm" class="btn-danger" type="button">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="status-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Resultado del contacto</h3>
+      <p id="status-modal-message"></p>
+      <div class="modal-stack-actions">
+        <button id="btn-status-contacted" class="btn-whatsapp" type="button">Se envió (Marcar Contactado)</button>
+        <button id="btn-status-no-wa" class="btn-warning" type="button">No tiene WhatsApp (Guardar para llamada/redes)</button>
+        <button id="btn-status-keep" class="btn-secondary" type="button">Mantener como Nuevo</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="template-picker-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Elegir mensaje para WhatsApp</h3>
+      <p id="picker-lead-name" class="helper-hint"></p>
+      <div id="picker-buttons-list" class="modal-stack-actions"></div>
+      <div class="modal-stack-actions">
+        <button id="btn-picker-free" class="btn-secondary" type="button">Mensaje libre / Notas</button>
+        <button id="btn-picker-cancel" class="btn-danger" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tag-picker-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="tag-picker-title">Asignar etiqueta de fase</h3>
+      <p id="tag-picker-lead-name" class="helper-hint"></p>
+      <span class="scheduler-sublabel">Fecha de envío del toque</span>
+      <div id="tag-retroactive-row" class="quick-chips"></div>
+      <div id="tag-picker-list" class="modal-stack-actions"></div>
+      <div class="modal-stack-actions">
+        <button id="btn-tag-picker-cancel" class="btn-secondary" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="bulk-tag-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Asignar etiqueta a grupo</h3>
+      <p id="bulk-tag-tpl-name" class="helper-hint"></p>
+      <p id="bulk-tag-feedback" class="backup-feedback hidden"></p>
+      <div class="field-group">
+        <label for="bulk-tag-retro-select">Fecha de envío a registrar</label>
+        <select id="bulk-tag-retro-select">
+          <option value="0">Hoy</option>
+          <option value="3">Hace 3 días (Listo Fase 2)</option>
+          <option value="4">Hace 4 días (Listo Fase 3)</option>
+          <option value="7">Hace 7 días</option>
+        </select>
+      </div>
+      <div id="bulk-status-checks" class="bulk-checks-grid">
+        <label class="bulk-check-item"><input type="checkbox" value="nuevo"> Nuevos</label>
+        <label class="bulk-check-item"><input type="checkbox" value="contactado" checked> Contactados</label>
+        <label class="bulk-check-item"><input type="checkbox" value="seguimiento" checked> Seguimiento</label>
+        <label class="bulk-check-item"><input type="checkbox" value="vendido"> Vendidos</label>
+        <label class="bulk-check-item"><input type="checkbox" value="descartado"> Descartados</label>
+        <label class="bulk-check-item"><input type="checkbox" value="sin_whatsapp"> Sin WhatsApp</label>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-cancel-bulk-tag" class="btn-secondary" type="button">Cerrar</button>
+        <button id="btn-confirm-bulk-tag" class="btn-primary" type="button">Aplicar etiqueta</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-campaign-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Lanzar Nueva Campaña</h3>
+      <p class="helper-hint">Archiva los resultados actuales en el historial de cada contacto y reinicia toda la base a Nuevo para prospectar otro producto.</p>
+      <p id="new-campaign-feedback" class="backup-feedback hidden"></p>
+      <form id="new-campaign-form">
+        <div class="field-group">
+          <label for="new-campaign-name">Nombre del producto o campaña</label>
+          <input type="text" id="new-campaign-name" required placeholder="Ej. Carta Digital QR">
+        </div>
+        <div class="field-group">
+          <label for="new-campaign-desc">Objetivo breve (opcional)</label>
+          <input type="text" id="new-campaign-desc" placeholder="Ej. Venta mensual a restaurantes">
+        </div>
+        <label class="bulk-check-item">
+          <input type="checkbox" id="new-campaign-clone"> Copiar plantillas de la campaña actual
+        </label>
+        <div class="modal-actions">
+          <button id="btn-cancel-new-campaign" class="btn-secondary" type="button">Cancelar</button>
+          <button class="btn-primary" type="submit">Iniciar Campaña</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="template-manager-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-scroll">
+      <div class="modal-header-row">
+        <h3>Plantillas de la Campaña</h3>
+        <button id="btn-close-manager" class="btn-secondary btn-compact" type="button">Cerrar</button>
+      </div>
+      <p class="helper-hint">Variables disponibles: {nombre} y {rubro}.</p>
+      <div id="templates-editor-list" class="templates-list"></div>
+      <form id="new-template-form" class="new-template-box">
+        <h4>Agregar nueva plantilla</h4>
+        <div class="field-group">
+          <label for="new-tpl-label">Nombre del botón</label>
+          <input type="text" id="new-tpl-label" required placeholder="Ej. Fase 1 · Gastronomía">
+        </div>
+        <div class="template-meta-selects">
+          <select id="new-tpl-phase" aria-label="Fase sugerida">
+            <option value="0">General (Cualquier fase)</option>
+            <option value="1">Fase 1 · Primer contacto</option>
+            <option value="2">Fase 2 · Seguimiento +3d</option>
+            <option value="3">Fase 3 · Cierre ciclo +4d</option>
+          </select>
+          <select id="new-tpl-rubro" aria-label="Rubro específico">
+            <option value="">Todos los rubros</option>
+            <option value="gastronomia">Gastronomía</option>
+            <option value="barberia">Barbería y Belleza</option>
+            <option value="veterinaria">Veterinaria y Mascotas</option>
+            <option value="comercio">Tienda y Comercio</option>
+            <option value="servicios">Servicios y Otros</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="new-tpl-text">Texto del mensaje</label>
+          <textarea id="new-tpl-text" rows="3" required placeholder="Hola {nombre}, ..."></textarea>
+        </div>
+        <button class="btn-primary btn-full" type="submit">+ Guardar plantilla</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="interest-manager-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-scroll">
+      <div class="modal-header-row">
+        <h3>Etiquetas de Interés</h3>
+        <button id="btn-close-interest-manager" class="btn-secondary btn-compact" type="button">Cerrar</button>
+      </div>
+      <p class="helper-hint">Personaliza los estados de conversación viva que aparecen en Seguimiento y en el Dashboard.</p>
+      <p id="interest-manager-feedback" class="backup-feedback hidden"></p>
+      <div id="interest-tags-editor-list" class="templates-list"></div>
+      <form id="new-interest-tag-form" class="new-template-box">
+        <h4>Agregar nueva etiqueta de interés</h4>
+        <div class="field-group">
+          <label for="new-int-label">Nombre de la etiqueta</label>
+          <input type="text" id="new-int-label" required placeholder="Ej. Pendiente cotización">
+        </div>
+        <div class="field-group">
+          <label for="new-int-tone">Color visual</label>
+          <select id="new-int-tone" aria-label="Color de la etiqueta">
+            <option value="hot">Rojo (Caliente)</option>
+            <option value="demo">Celeste (Demo)</option>
+            <option value="negotiating">Ámbar (Negociando)</option>
+            <option value="ai">Morado (IA / Bot)</option>
+            <option value="quoted">Verde (Cotizado)</option>
+            <option value="owner">Naranja (Dueño)</option>
+          </select>
+        </div>
+        <button class="btn-primary btn-full" type="submit">+ Guardar etiqueta</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="backup-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-scroll">
+      <div class="modal-header-row">
+        <h3>Respaldo e Importación</h3>
+        <button id="btn-close-backup" class="btn-secondary btn-compact" type="button">Cerrar</button>
+      </div>
+      <p id="backup-feedback" class="backup-feedback hidden"></p>
+
+      <div class="new-template-box">
+        <h4>Copia de Seguridad (JSON)</h4>
+        <p class="helper-hint">Exporta o comparte tus contactos, campañas y plantillas, o restaura un archivo previo sin perder tus datos actuales.</p>
+        <div class="backup-btn-row">
+          <button id="btn-export-backup" class="btn-primary" type="button">Descargar JSON</button>
+          <button id="btn-share-backup" class="btn-secondary" type="button">Compartir</button>
+        </div>
+        <div class="field-group">
+          <label for="input-import-backup">Restaurar y fusionar desde JSON</label>
+          <input type="file" id="input-import-backup" accept=".json,application/json">
+        </div>
+      </div>
+
+      <div class="new-template-box">
+        <h4>Importar Lote Diario por Texto</h4>
+        <p class="helper-hint">Pega hasta 50 contactos con formato Nombre - Número (uno por línea).</p>
+        <div class="field-group">
+          <label for="bulk-default-rubro">Rubro para este lote (opcional)</label>
+          <select id="bulk-default-rubro">
+            <option value="">Sin especificar</option>
+            <option value="gastronomia">Gastronomía</option>
+            <option value="barberia">Barbería y Belleza</option>
+            <option value="veterinaria">Veterinaria y Mascotas</option>
+            <option value="comercio">Tienda y Comercio</option>
+            <option value="servicios">Servicios y Otros</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="bulk-leads-text">Lista de prospectos</label>
+          <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321&#10;Restaurante El Sol - 51912345678"></textarea>
+        </div>
+        <button id="btn-import-bulk" class="btn-whatsapp btn-full" type="button">Agregar Contactos Nuevos</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>
