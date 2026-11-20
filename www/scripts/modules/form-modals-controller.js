@@ -1,6 +1,14 @@
-import { saveLead, deleteLead, updateLeadReminder } from '../services/db-service.js';
+import {
+  saveLead,
+  deleteLead,
+  updateLeadReminder,
+  applyLeadWhatsAppOutcome
+} from '../services/db-service.js';
+import { formatReminderLabel } from '../services/reminder-service.js';
+import { getActiveCampaignId } from '../services/template-service.js';
 
 const $ = (id) => document.getElementById(id);
+const PENDING_WA_KEY = 'crm_prospeccion_pending_wa_v2';
 
 export function createFormModalsController(dom, state, scheduler, campaignCtrl, selectionCtrl, callbacks) {
   function showFeedback(el, text) {
@@ -13,6 +21,11 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
 
   function syncFormFields() {
     dom.saleAmountGroup.classList.toggle('hidden', dom.leadStatus.value !== 'vendido');
+  }
+
+  function formatReminderPreview(reminderAt, reminderReason) {
+    const formatted = formatReminderLabel(reminderAt, reminderReason);
+    return formatted ? formatted : 'Sin recordatorio';
   }
 
   function openReminderModalForLead(lead) {
@@ -40,9 +53,10 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       dom.leadRubro.value = '';
       state.draftReminder = { reminderAt: '', reminderReason: '' };
     }
-    dom.formReminderPreview.textContent = state.draftReminder.reminderAt
-      ? state.draftReminder.reminderAt.replace('T', ' ')
-      : 'Sin recordatorio';
+    dom.formReminderPreview.textContent = formatReminderPreview(
+      state.draftReminder.reminderAt,
+      state.draftReminder.reminderReason
+    );
     syncFormFields();
     dom.formModal.classList.remove('hidden');
     dom.leadName.focus();
@@ -100,11 +114,16 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
   }
 
   async function applyWhatsAppOutcome(newStatus) {
-    const lead = state.pendingWhatsAppLead;
+    const pending = state.pendingWhatsAppLead;
     state.pendingWhatsAppLead = null;
+    try {
+      sessionStorage.removeItem(PENDING_WA_KEY);
+    } catch (error) {}
     dom.statusModal.classList.add('hidden');
-    if (lead && newStatus) {
-      await saveLead(Object.assign({}, lead, { status: newStatus }));
+    const targetId = pending ? (pending.leadId || pending.id) : '';
+    if (targetId && newStatus) {
+      const tpl = newStatus === 'contactado' && pending.tpl ? pending.tpl : null;
+      await applyLeadWhatsAppOutcome(targetId, newStatus, tpl);
       await callbacks.onRefreshLeads();
     }
   }
@@ -179,6 +198,11 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       await tools.shareBackupJson(state.leads, dom.backupFeedback);
       await callbacks.onRenderActiveView();
     });
+    $('btn-copy-backup').addEventListener('click', async () => {
+      const tools = await import('./modal-tools.js');
+      await tools.copyBackupJson(state.leads, dom.backupFeedback);
+      await callbacks.onRenderActiveView();
+    });
     $('input-import-backup').addEventListener('change', async (ev) => {
       const tools = await import('./modal-tools.js');
       await tools.importBackupJson(ev.target.files ? ev.target.files[0] : null, dom.backupFeedback, async () => {
@@ -238,12 +262,13 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
         return;
       }
       state.draftReminder = vals;
-      dom.formReminderPreview.textContent = vals.reminderAt ? vals.reminderAt.replace('T', ' ') : 'Sin recordatorio';
+      dom.formReminderPreview.textContent = formatReminderPreview(vals.reminderAt, vals.reminderReason);
     });
     dom.leadForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const existingId = dom.leadId.value;
       const existingLead = existingId ? state.leads.find((item) => item.id === existingId) : null;
+      const hadReminder = Boolean(existingLead && existingLead.reminderAt);
       try {
         const saved = await saveLead(Object.assign({}, existingLead ? existingLead : {}, {
           id: existingId ? existingId : null,
@@ -254,10 +279,13 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
           saleAmount: dom.leadAmount.value,
           reminderAt: state.draftReminder.reminderAt,
           reminderReason: state.draftReminder.reminderReason,
-          notes: dom.leadNotes.value
+          notes: dom.leadNotes.value,
+          campaignId: existingLead && existingLead.campaignId ? existingLead.campaignId : getActiveCampaignId()
         }));
         if (saved && saved.reminderAt) {
           await callbacks.onScheduleNativeReminder(saved);
+        } else if (saved && hadReminder) {
+          await callbacks.onCancelNativeReminder(saved.id);
         }
         closeForm();
         await callbacks.onRefreshLeads();

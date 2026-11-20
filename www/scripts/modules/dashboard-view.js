@@ -32,7 +32,7 @@ function buildQueueBlock(queue, handlers) {
     },
     {
       key: 'nuevo_f1',
-      status: 'nuevo',
+      status: 'todos',
       count: queue.nuevosSinFase1,
       label: 'Nuevos sin Fase 1',
       sub: 'Listos 1er mensaje',
@@ -124,6 +124,9 @@ function buildFunnelBlock(funnel, campaignState, handlers) {
     { status: 'vendido', label: 'Vendidos', count: funnel.vendido, cls: 'stage-vendido' },
     { status: 'descartado', label: 'Descartados', count: funnel.descartado, cls: 'stage-descartado' }
   ];
+  if (funnel.sinWhatsapp > 0) {
+    stages.push({ status: 'sin_whatsapp', label: 'Sin WhatsApp', count: funnel.sinWhatsapp, cls: 'stage-sin_whatsapp' });
+  }
 
   const listWrap = createEl('div', 'dash-funnel-list');
   const baseTotal = funnel.total > 0 ? funnel.total : 1;
@@ -137,8 +140,8 @@ function buildFunnelBlock(funnel, campaignState, handlers) {
     rowBtn.appendChild(topLine);
 
     const track = createEl('div', 'dash-bar-track');
-    const fill = createEl('div', 'dash-bar-fill ' + st.cls);
     const pct = Math.min(100, Math.round((st.count / baseTotal) * 100));
+    const fill = createEl('div', pct === 0 ? 'dash-bar-fill bar-empty ' + st.cls : 'dash-bar-fill ' + st.cls);
     fill.style.width = pct + '%';
     track.appendChild(fill);
     rowBtn.appendChild(track);

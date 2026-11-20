@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v6';
+const CACHE_NAME = 'crm-prospeccion-v8';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS_TO_CACHE = [
   './styles/features.css',
   './styles/dashboard.css',
   './scripts/app.js',
+  './scripts/services/lead-schema.js',
   './scripts/services/db-service.js',
   './scripts/services/phase-engine.js',
   './scripts/services/whatsapp-service.js',
@@ -69,20 +70,22 @@ self.addEventListener('fetch', (event) => {
     caches.open(CACHE_NAME).then((cache) => {
       return cache.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
         const networkFetch = fetch(event.request).then((networkResponse) => {
-          if (networkResponse) {
-            if (networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
+          if (networkResponse && networkResponse.status === 200) {
+            cache.put(event.request, networkResponse.clone());
           }
           return networkResponse;
         }).catch(() => {
           if (event.request.mode === 'navigate') {
             return cache.match('./index.html');
           }
-          return cachedResponse;
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return new Response('', { status: 503, statusText: 'Offline' });
         });
 
         if (cachedResponse) {
+          event.waitUntil(networkFetch);
           return cachedResponse;
         }
         return networkFetch;

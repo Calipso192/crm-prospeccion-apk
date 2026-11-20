@@ -1,5 +1,5 @@
 import {
-  saveLead,
+  bulkInsertLeads,
   mergeImportedLeads,
   resetAutoBackupCounter
 } from '../services/db-service.js';
@@ -12,42 +12,96 @@ export {
   applyBulkTagSelection
 } from './template-modal-ui.js';
 
-function showModalFeedback(el, text) {
-  if (!el) {
+let toastTimer = null;
+
+function showAppToast(text, isError) {
+  if (typeof document === 'undefined') {
     return;
   }
-  el.textContent = text;
-  el.classList.remove('hidden');
+  const toastEl = document.getElementById('app-toast');
+  if (!toastEl) {
+    return;
+  }
+  toastEl.textContent = text;
+  toastEl.classList.toggle('toast-error', Boolean(isError));
+  toastEl.classList.remove('hidden');
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+  }
+  toastTimer = setTimeout(() => {
+    toastEl.classList.add('hidden');
+  }, 5500);
+}
+
+function showModalFeedback(el, text, isError) {
+  if (el) {
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+  showAppToast(text, isError);
+}
+
+async function getExportArgs(leads) {
+  const tplMod = await import('../services/template-service.js');
+  const phaseMod = await import('../services/phase-engine.js');
+  return [
+    leads,
+    tplMod.getTemplates('all'),
+    tplMod.getCampaigns(),
+    phaseMod.getInterestTagsCatalog(),
+    tplMod.getActiveCampaignId()
+  ];
 }
 
 export async function exportBackupJson(leads, feedbackEl) {
-  const backupMod = await import('../services/backup-service.js');
-  const tplMod = await import('../services/template-service.js');
-  const fileName = backupMod.downloadBackupFile(
-    leads,
-    tplMod.getTemplates('all'),
-    tplMod.getCampaigns()
-  );
-  resetAutoBackupCounter();
-  showModalFeedback(feedbackEl, 'Respaldo descargado: ' + fileName);
+  try {
+    const backupMod = await import('../services/backup-service.js');
+    const args = await getExportArgs(leads);
+    const res = await backupMod.downloadBackupFile(...args);
+    resetAutoBackupCounter();
+    const loc = res && res.displayPath ? res.displayPath : (res && res.fileName ? res.fileName : 'respaldo.json');
+    const prefix = res && res.usedFallback
+      ? 'Respaldo guardado en Cache (Documentos restringido): '
+      : 'Respaldo guardado en: ';
+    showModalFeedback(feedbackEl, prefix + loc, false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al exportar respaldo.', true);
+  }
 }
 
 export async function shareBackupJson(leads, feedbackEl) {
-  const backupMod = await import('../services/backup-service.js');
-  const tplMod = await import('../services/template-service.js');
-  const result = await backupMod.shareBackupFile(
-    leads,
-    tplMod.getTemplates('all'),
-    tplMod.getCampaigns()
-  );
-  if (result && result.cancelled) {
-    return;
+  try {
+    const backupMod = await import('../services/backup-service.js');
+    const args = await getExportArgs(leads);
+    const result = await backupMod.shareBackupFile(...args);
+    if (result && result.cancelled) {
+      return;
+    }
+    resetAutoBackupCounter();
+    if (result && result.shared) {
+      showModalFeedback(feedbackEl, 'Respaldo compartido correctamente.', false);
+    } else {
+      const loc = result && result.displayPath ? result.displayPath : (result ? result.fileName : 'respaldo.json');
+      showModalFeedback(feedbackEl, 'Respaldo guardado en: ' + loc, false);
+    }
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al compartir respaldo.', true);
   }
-  resetAutoBackupCounter();
-  if (result && result.shared) {
-    showModalFeedback(feedbackEl, 'Respaldo compartido correctamente.');
-  } else {
-    showModalFeedback(feedbackEl, 'Respaldo descargado: ' + result.fileName);
+}
+
+export async function copyBackupJson(leads, feedbackEl) {
+  try {
+    const backupMod = await import('../services/backup-service.js');
+    const args = await getExportArgs(leads);
+    const res = await backupMod.copyBackupJsonToClipboard(...args);
+    resetAutoBackupCounter();
+    showModalFeedback(
+      feedbackEl,
+      'JSON copiado al portapapeles (' + res.leadsCount + ' contactos). Pégalo en Notas o WhatsApp.',
+      false
+    );
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'No se pudo copiar el JSON.', true);
   }
 }
 
@@ -58,55 +112,49 @@ export async function importBackupJson(file, feedbackEl, onComplete) {
   try {
     const backupMod = await import('../services/backup-service.js');
     const tplMod = await import('../services/template-service.js');
+    const phaseMod = await import('../services/phase-engine.js');
     const data = await backupMod.readBackupFile(file);
-    const mergeStats = await mergeImportedLeads(data.leads);
 
-    if (data.templates.length > 0) {
-      const activeTemplates = tplMod.getAllTemplatesRaw();
-      const existingIds = activeTemplates.map((t) => t.id);
-      const mergedTemplates = activeTemplates.slice();
-      data.templates.forEach((tpl) => {
-        if (tpl && tpl.id && existingIds.indexOf(tpl.id) === -1) {
-          mergedTemplates.push(tpl);
-        }
-      });
-      if (mergedTemplates.length > activeTemplates.length) {
-        tplMod.saveTemplates(mergedTemplates);
-      }
-    }
+    const campStats = tplMod.mergeCampaigns(data.campaigns, data.activeCampaignId);
+    const tplStats = tplMod.mergeTemplates(data.templates);
+    const intStats = phaseMod.mergeInterestTagsCatalog(data.interestTagsCatalog, data.leads);
+    const mergeStats = await mergeImportedLeads(data.leads);
 
     if (onComplete) {
       await onComplete();
     }
-    const msg = 'Fusión completada: ' + mergeStats.added + ' nuevos y ' + mergeStats.updated + ' actualizados.';
-    showModalFeedback(feedbackEl, msg);
+    const parts = [mergeStats.added + ' contactos nuevos', mergeStats.updated + ' actualizados'];
+    if (campStats.added > 0) {
+      parts.push(campStats.added + ' campañas');
+    }
+    if (tplStats.added + tplStats.updated > 0) {
+      parts.push((tplStats.added + tplStats.updated) + ' plantillas');
+    }
+    if (intStats.added + intStats.updated > 0) {
+      parts.push((intStats.added + intStats.updated) + ' etiquetas');
+    }
+    showModalFeedback(feedbackEl, 'Fusión completada: ' + parts.join(', ') + '.', false);
   } catch (error) {
-    showModalFeedback(feedbackEl, error.message);
+    showModalFeedback(feedbackEl, error.message, true);
   }
 }
 
 export async function importBulkLeads(textareaEl, rubroSelectEl, feedbackEl, onComplete) {
   const backupMod = await import('../services/backup-service.js');
+  const tplMod = await import('../services/template-service.js');
   const defaultRubro = rubroSelectEl ? rubroSelectEl.value : '';
   const parsedList = backupMod.parseBulkLeadsText(textareaEl.value, defaultRubro);
   if (parsedList.length === 0) {
-    showModalFeedback(feedbackEl, 'No se detectaron contactos válidos. Usa: Nombre - Número');
+    showModalFeedback(feedbackEl, 'No se detectaron contactos válidos. Usa: Nombre - Número', true);
     return;
   }
-  let added = 0;
-  let skipped = 0;
-  for (let i = 0; i < parsedList.length; i += 1) {
-    const res = await saveLead(parsedList[i], { skipDuplicate: true });
-    if (res && res.skipped) {
-      skipped += 1;
-    } else {
-      added += 1;
-    }
-  }
+  const stats = await bulkInsertLeads(parsedList, {
+    defaultCampaignId: tplMod.getActiveCampaignId()
+  });
   textareaEl.value = '';
   if (onComplete) {
     await onComplete();
   }
-  const extra = skipped > 0 ? ' (' + skipped + ' duplicados omitidos).' : '.';
-  showModalFeedback(feedbackEl, 'Se agregaron ' + added + ' prospectos nuevos' + extra);
+  const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' duplicados omitidos).' : '.';
+  showModalFeedback(feedbackEl, 'Se agregaron ' + stats.added + ' prospectos nuevos' + extra, false);
 }

@@ -48,6 +48,10 @@ const DEFAULT_TEMPLATES = [
   }
 ];
 
+function shortRand() {
+  return Math.random().toString(36).slice(2, 6);
+}
+
 function normalizeTemplateItem(item) {
   const cleanPhase = Number(item.phase);
   const validPhase = cleanPhase === 1 ? 1 : (cleanPhase === 2 ? 2 : (cleanPhase === 3 ? 3 : 0));
@@ -59,6 +63,14 @@ function normalizeTemplateItem(item) {
     label: item.label ? String(item.label).trim() : 'Mensaje',
     text: item.text ? String(item.text).trim() : ''
   };
+}
+
+function templatesEqual(a, b) {
+  return a.campaignId === b.campaignId &&
+    a.phase === b.phase &&
+    a.rubro === b.rubro &&
+    a.label === b.label &&
+    a.text === b.text;
 }
 
 export function getCampaigns() {
@@ -106,51 +118,82 @@ export function setActiveCampaign(campaignId) {
   return getActiveCampaign();
 }
 
-export function createCampaign(name, description, cloneTemplatesFromActive) {
+export function createCampaign(name, description, cloneTemplatesFromActive, forcedId) {
   const cleanName = name ? String(name).trim() : '';
   if (!cleanName) {
     throw new Error('Ingresa un nombre para la nueva campaña.');
   }
   const campaigns = getCampaigns();
-  const newId = 'camp_' + Date.now();
+  const now = Date.now();
+  const newId = forcedId ? String(forcedId) : 'camp_' + now + '_' + shortRand();
   const newCampaign = {
     id: newId,
     name: cleanName,
     description: description ? String(description).trim() : '',
-    createdAt: Date.now()
+    createdAt: now
   };
   campaigns.push(newCampaign);
   localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(campaigns));
 
   const currentTemplates = getAllTemplatesRaw();
-  if (cloneTemplatesFromActive) {
-    const sourceId = getActiveCampaignId();
-    const sourceTemplates = currentTemplates.filter((t) => t.campaignId === sourceId);
-    sourceTemplates.forEach((tpl, idx) => {
-      currentTemplates.push({
-        id: 'tpl_' + Date.now() + '_' + idx,
-        campaignId: newId,
-        phase: tpl.phase,
-        rubro: tpl.rubro,
-        label: tpl.label,
-        text: tpl.text
-      });
+  const sourceId = getActiveCampaignId();
+  const sourceList = cloneTemplatesFromActive
+    ? currentTemplates.filter((t) => t.campaignId === sourceId)
+    : DEFAULT_TEMPLATES;
+
+  sourceList.forEach((tpl, idx) => {
+    currentTemplates.push({
+      id: 'tpl_' + now + '_' + idx + '_' + shortRand(),
+      campaignId: newId,
+      phase: tpl.phase,
+      rubro: cloneTemplatesFromActive ? tpl.rubro : '',
+      label: tpl.label,
+      text: tpl.text
     });
-  } else {
-    DEFAULT_TEMPLATES.forEach((tpl, idx) => {
-      currentTemplates.push({
-        id: 'tpl_' + Date.now() + '_' + idx,
-        campaignId: newId,
-        phase: tpl.phase,
-        rubro: '',
-        label: tpl.label,
-        text: tpl.text
-      });
-    });
-  }
+  });
+
   saveTemplates(currentTemplates);
   localStorage.setItem(ACTIVE_CAMPAIGN_KEY, newId);
   return newCampaign;
+}
+
+export function mergeCampaigns(incomingCampaigns, preferredActiveId) {
+  const incoming = Array.isArray(incomingCampaigns) ? incomingCampaigns : [];
+  if (incoming.length === 0) {
+    return { added: 0 };
+  }
+  const existing = getCampaigns();
+  const existingIds = new Set(existing.map((c) => String(c.id)));
+  const merged = existing.slice();
+  let added = 0;
+
+  incoming.forEach((camp) => {
+    if (!camp || !camp.id) {
+      return;
+    }
+    const id = String(camp.id);
+    if (existingIds.has(id)) {
+      return;
+    }
+    existingIds.add(id);
+    merged.push({
+      id: id,
+      name: camp.name ? String(camp.name).trim() : 'Campaña importada',
+      description: camp.description ? String(camp.description).trim() : '',
+      createdAt: Number(camp.createdAt) > 0 ? Number(camp.createdAt) : Date.now()
+    });
+    added += 1;
+  });
+
+  if (added > 0) {
+    localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(merged));
+  }
+  if (preferredActiveId && existing.length === 1 && existing[0].id === DEFAULT_CAMPAIGN_ID) {
+    if (merged.some((c) => c.id === preferredActiveId)) {
+      localStorage.setItem(ACTIVE_CAMPAIGN_KEY, preferredActiveId);
+    }
+  }
+  return { added: added };
 }
 
 export function getAllTemplatesRaw() {
@@ -158,7 +201,7 @@ export function getAllTemplatesRaw() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed.map(normalizeTemplateItem);
       }
     } catch (error) {
@@ -201,13 +244,50 @@ export function getTemplates(campaignIdFilter) {
     return all;
   }
   const targetCampaign = campaignIdFilter ? campaignIdFilter : getActiveCampaignId();
-  const filtered = all.filter((tpl) => tpl.campaignId === targetCampaign);
-  return filtered.length > 0 ? filtered : all;
+  return all.filter((tpl) => tpl.campaignId === targetCampaign);
 }
 
 export function saveTemplates(templates) {
   const normalized = Array.isArray(templates) ? templates.map(normalizeTemplateItem) : [];
   localStorage.setItem(TEMPLATES_KEY, JSON.stringify(normalized));
+}
+
+export function mergeTemplates(incomingTemplates) {
+  const incoming = Array.isArray(incomingTemplates) ? incomingTemplates : [];
+  if (incoming.length === 0) {
+    return { added: 0, updated: 0 };
+  }
+  const defaultById = new Map(DEFAULT_TEMPLATES.map((t) => [t.id, normalizeTemplateItem(t)]));
+  const current = getAllTemplatesRaw();
+  const indexById = new Map(current.map((t, idx) => [t.id, idx]));
+  const merged = current.slice();
+  let added = 0;
+  let updated = 0;
+
+  incoming.forEach((raw) => {
+    if (!raw || !raw.id) {
+      return;
+    }
+    const inc = normalizeTemplateItem(raw);
+    if (!indexById.has(inc.id)) {
+      indexById.set(inc.id, merged.length);
+      merged.push(inc);
+      added += 1;
+      return;
+    }
+    const idx = indexById.get(inc.id);
+    const localTpl = merged[idx];
+    const defTpl = defaultById.get(inc.id);
+    if (defTpl && templatesEqual(localTpl, defTpl) && !templatesEqual(inc, defTpl)) {
+      merged[idx] = inc;
+      updated += 1;
+    }
+  });
+
+  if (added > 0 || updated > 0) {
+    saveTemplates(merged);
+  }
+  return { added: added, updated: updated };
 }
 
 export function addTemplate(label, text, options) {
@@ -217,7 +297,7 @@ export function addTemplate(label, text, options) {
   const nextNumber = current.length + 1;
   const cleanLabel = label && label.trim() ? label.trim() : 'Mensaje ' + nextNumber;
   const newItem = normalizeTemplateItem({
-    id: 'tpl_' + Date.now(),
+    id: 'tpl_' + Date.now() + '_' + shortRand(),
     campaignId: activeCamp,
     phase: opts.phase !== undefined ? opts.phase : 0,
     rubro: opts.rubro ? opts.rubro : '',

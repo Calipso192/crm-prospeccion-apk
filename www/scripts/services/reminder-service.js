@@ -1,3 +1,5 @@
+import { isCapacitorNative, openExternalTarget } from './whatsapp-service.js';
+
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 function padTwo(num) {
@@ -26,20 +28,6 @@ function formatHour12(hour, minute) {
   const modHour = hour % 12;
   const displayHour = modHour === 0 ? 12 : modHour;
   return displayHour + ':' + padTwo(minute) + ' ' + period;
-}
-
-function isCapacitorNative() {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-  const cap = window.Capacitor;
-  if (!cap) {
-    return false;
-  }
-  if (typeof cap.isNativePlatform === 'function') {
-    return Boolean(cap.isNativePlatform());
-  }
-  return Boolean(cap.isNative);
 }
 
 function hashLeadIdToInt(leadId) {
@@ -197,27 +185,7 @@ export function buildGoogleCalendarUrl(lead, overrideReminderAt, overrideReason)
 
 export function openGoogleCalendar(lead, overrideReminderAt, overrideReason) {
   const url = buildGoogleCalendarUrl(lead, overrideReminderAt, overrideReason);
-  if (isCapacitorNative()) {
-    const plugins = window.Capacitor.Plugins;
-    if (plugins && plugins.Browser && typeof plugins.Browser.open === 'function') {
-      plugins.Browser.open({ url: url }).catch(() => {
-        window.location.href = url;
-      });
-      return;
-    }
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    return;
-  }
-  const popup = window.open(url, '_blank', 'noopener');
-  if (!popup) {
-    window.location.href = url;
-  }
+  openExternalTarget(url);
 }
 
 export async function scheduleNativeReminder(lead) {

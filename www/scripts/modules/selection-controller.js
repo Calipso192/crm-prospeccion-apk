@@ -11,6 +11,16 @@ export function createSelectionController(elements, state, callbacks) {
     elements.bulkSelectionBar.classList.toggle('hidden', !state.selectionMode);
   }
 
+  async function refreshSelectionVisuals() {
+    if (callbacks.onSyncSelectionUi) {
+      callbacks.onSyncSelectionUi();
+      return;
+    }
+    if (callbacks.onRender) {
+      await callbacks.onRender();
+    }
+  }
+
   function exitSelection() {
     state.selectionMode = false;
     state.selectedIds = [];
@@ -22,7 +32,7 @@ export function createSelectionController(elements, state, callbacks) {
     state.selectionMode = true;
     state.selectedIds = [lead.id];
     syncBar();
-    await callbacks.onRender();
+    await refreshSelectionVisuals();
   }
 
   async function selectAllVisible(visibleIds) {
@@ -33,7 +43,7 @@ export function createSelectionController(elements, state, callbacks) {
     state.selectionMode = true;
     state.selectedIds = ids;
     syncBar();
-    await callbacks.onRender();
+    await refreshSelectionVisuals();
   }
 
   async function toggleSelect(lead) {
@@ -48,7 +58,7 @@ export function createSelectionController(elements, state, callbacks) {
     } else {
       syncBar();
     }
-    await callbacks.onRender();
+    await refreshSelectionVisuals();
   }
 
   function openSingleRubroPicker(lead) {
@@ -105,7 +115,7 @@ export function createSelectionController(elements, state, callbacks) {
   function bind() {
     elements.btnBulkSelCancel.addEventListener('click', async () => {
       exitSelection();
-      await callbacks.onRender();
+      await refreshSelectionVisuals();
     });
 
     if (elements.btnBulkSelAll) {

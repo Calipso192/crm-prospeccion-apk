@@ -1,4 +1,4 @@
-import { matchesQueueFilter, sortSeguimientoLeads } from '../services/phase-engine.js';
+import { matchesQueueFilter, sortSeguimientoLeads, getInterestTagsCatalog } from '../services/phase-engine.js';
 import { matchesRubroAndCampaign } from './campaign-controller.js';
 
 const BATCH_SIZE = 30;
@@ -60,16 +60,20 @@ export function createListRenderer(elements, state, getBaseHandlers) {
     mods.tplMod.getTemplates('all').forEach((tpl) => {
       tagLabelsMap[tpl.id] = tpl.label;
     });
+    const interestCatalog = getInterestTagsCatalog();
 
     const baseHandlers = getBaseHandlers(mods.waMod, tagLabelsMap);
     const endIdx = Math.min(renderedCount + BATCH_SIZE, currentFiltered.length);
     const fragment = document.createDocumentFragment();
+    const selectedSet = new Set(state.selectedIds);
 
     for (let i = renderedCount; i < endIdx; i += 1) {
       const lead = currentFiltered[i];
       const handlers = Object.assign({}, baseHandlers, {
+        interestCatalog: interestCatalog,
+        isSelectionActive: () => state.selectionMode,
         isSelectionMode: state.selectionMode,
-        isSelected: state.selectedIds.indexOf(lead.id) !== -1
+        isSelected: selectedSet.has(lead.id)
       });
       fragment.appendChild(mods.cardMod.createLeadCard(lead, handlers));
     }
@@ -89,6 +93,21 @@ export function createListRenderer(elements, state, getBaseHandlers) {
       });
       elements.leadsList.appendChild(loadMoreBtn);
     }
+  }
+
+  function syncSelectionUi() {
+    const selectedSet = new Set(state.selectedIds);
+    const cards = elements.leadsList.querySelectorAll('.lead-card');
+    cards.forEach((card) => {
+      const isSel = state.selectionMode && selectedSet.has(card.dataset.id);
+      card.classList.toggle('lead-card-selected', isSel);
+      const check = card.querySelector('.select-check');
+      if (check) {
+        check.classList.toggle('hidden', !state.selectionMode);
+        check.classList.toggle('checked', isSel);
+        check.textContent = isSel ? '✓' : '';
+      }
+    });
   }
 
   function filterAndSortLeads(allLeads) {
@@ -164,6 +183,7 @@ export function createListRenderer(elements, state, getBaseHandlers) {
   return {
     render: render,
     getVisibleIds: getVisibleIds,
-    focusLeadById: focusLeadById
+    focusLeadById: focusLeadById,
+    syncSelectionUi: syncSelectionUi
   };
 }

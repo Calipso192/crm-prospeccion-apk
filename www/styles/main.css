@@ -230,7 +230,8 @@ button {
 .status-nuevo { color: var(--status-nuevo); }
 .status-contactado { color: var(--status-contactado); }
 .status-seguimiento { color: var(--status-seguimiento); }
-.status-cerrado { color: var(--status-cerrado); }
+.status-vendido { color: var(--status-vendido); }
+.status-descartado { color: var(--status-descartado); }
 .status-sin_whatsapp { color: var(--status-sin-whatsapp); }
 
 .lead-notes {

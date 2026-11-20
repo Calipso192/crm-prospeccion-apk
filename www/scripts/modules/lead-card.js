@@ -31,6 +31,13 @@ function el(tag, cls, text) {
   return node;
 }
 
+function inSelection(handlers) {
+  if (handlers && typeof handlers.isSelectionActive === 'function') {
+    return Boolean(handlers.isSelectionActive());
+  }
+  return Boolean(handlers && handlers.isSelectionMode);
+}
+
 function isFinalStatus(statusKey) {
   return statusKey === 'vendido' ? true : statusKey === 'descartado';
 }
@@ -97,8 +104,9 @@ function buildMetaRow(lead, statusKey, phaseInfo, handlers) {
       const remBtn = el('button', 'lead-reminder-tag urgency-' + urg.level, 'Agenda: ' + reminderLabel);
       remBtn.type = 'button';
       remBtn.addEventListener('click', (ev) => {
+        if (inSelection(handlers)) { return; }
         ev.stopPropagation();
-        if (!handlers.isSelectionMode && handlers.onOpenReminderModal) {
+        if (handlers.onOpenReminderModal) {
           handlers.onOpenReminderModal(lead);
         }
       });
@@ -123,8 +131,9 @@ function buildSentTagsRow(lead, handlers) {
     removeBtn.type = 'button';
     removeBtn.setAttribute('aria-label', 'Quitar etiqueta ' + displayLabel);
     removeBtn.addEventListener('click', (ev) => {
+      if (inSelection(handlers)) { return; }
       ev.stopPropagation();
-      if (!handlers.isSelectionMode && handlers.onRemoveTag) {
+      if (handlers.onRemoveTag) {
         handlers.onRemoveTag(lead, Object.assign({}, tag, { label: displayLabel }));
       }
     });
@@ -136,8 +145,9 @@ function buildSentTagsRow(lead, handlers) {
   const addBtn = el('button', 'btn-add-tag', '+ Fase');
   addBtn.type = 'button';
   addBtn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
     ev.stopPropagation();
-    if (!handlers.isSelectionMode && handlers.onOpenAddTag) {
+    if (handlers.onOpenAddTag) {
       handlers.onOpenAddTag(lead);
     }
   });
@@ -151,7 +161,7 @@ function buildInterestRow(lead, statusKey, handlers) {
     return null;
   }
   const activeIds = activeTags.map((t) => t.id);
-  const catalog = getInterestTagsCatalog();
+  const catalog = Array.isArray(handlers.interestCatalog) ? handlers.interestCatalog : getInterestTagsCatalog();
   const row = el('div', 'interest-tags-row');
 
   catalog.forEach((tagObj) => {
@@ -163,8 +173,9 @@ function buildInterestRow(lead, statusKey, handlers) {
     const btn = el('button', cls, tagObj.label);
     btn.type = 'button';
     btn.addEventListener('click', (ev) => {
+      if (inSelection(handlers)) { return; }
       ev.stopPropagation();
-      if (!handlers.isSelectionMode && handlers.onToggleInterestTag) {
+      if (handlers.onToggleInterestTag) {
         handlers.onToggleInterestTag(lead, tagObj);
       }
     });
@@ -172,6 +183,26 @@ function buildInterestRow(lead, statusKey, handlers) {
   });
 
   return row.childNodes.length > 0 ? row : null;
+}
+
+function createQuickNoteItem(lead, item, handlers) {
+  const noteRow = el('div', 'quick-note-item');
+  const stamp = formatNoteTimestamp(item.createdAt);
+  const lineText = stamp ? '[' + stamp + '] ' + item.text : item.text;
+  noteRow.appendChild(el('span', 'quick-note-text', lineText));
+
+  const delBtn = el('button', 'quick-note-remove-btn', '×');
+  delBtn.type = 'button';
+  delBtn.setAttribute('aria-label', 'Borrar nota rápida');
+  delBtn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
+    ev.stopPropagation();
+    if (handlers.onRemoveQuickNote) {
+      handlers.onRemoveQuickNote(lead, item.id);
+    }
+  });
+  noteRow.appendChild(delBtn);
+  return noteRow;
 }
 
 function buildNotesSection(lead, statusKey, handlers) {
@@ -183,25 +214,25 @@ function buildNotesSection(lead, statusKey, handlers) {
   const qNotes = Array.isArray(lead.quickNotes) ? lead.quickNotes : [];
   if (qNotes.length > 0) {
     const list = el('div', 'quick-notes-list');
-    qNotes.slice(0, 4).forEach((item) => {
-      const noteRow = el('div', 'quick-note-item');
-      const stamp = formatNoteTimestamp(item.createdAt);
-      const lineText = stamp ? '[' + stamp + '] ' + item.text : item.text;
-      noteRow.appendChild(el('span', 'quick-note-text', lineText));
-
-      const delBtn = el('button', 'quick-note-remove-btn', '×');
-      delBtn.type = 'button';
-      delBtn.setAttribute('aria-label', 'Borrar nota rápida');
-      delBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        if (!handlers.isSelectionMode && handlers.onRemoveQuickNote) {
-          handlers.onRemoveQuickNote(lead, item.id);
-        }
-      });
-      noteRow.appendChild(delBtn);
-      list.appendChild(noteRow);
-    });
+    qNotes.slice(0, 4).forEach((item) => list.appendChild(createQuickNoteItem(lead, item, handlers)));
     wrap.appendChild(list);
+
+    if (qNotes.length > 4) {
+      const extraCount = qNotes.length - 4;
+      const extraList = el('div', 'quick-notes-list hidden');
+      qNotes.slice(4).forEach((item) => extraList.appendChild(createQuickNoteItem(lead, item, handlers)));
+      wrap.appendChild(extraList);
+
+      const btnMore = el('button', 'btn-notes-more', 'Ver ' + extraCount + ' notas más');
+      btnMore.type = 'button';
+      btnMore.addEventListener('click', (ev) => {
+        if (inSelection(handlers)) { return; }
+        ev.stopPropagation();
+        const isHidden = extraList.classList.toggle('hidden');
+        btnMore.textContent = isHidden ? 'Ver ' + extraCount + ' notas más' : 'Ocultar notas anteriores';
+      });
+      wrap.appendChild(btnMore);
+    }
   }
 
   if (statusKey === 'seguimiento') {
@@ -209,16 +240,24 @@ function buildNotesSection(lead, statusKey, handlers) {
     const input = document.createElement('input');
     input.type = 'text';
     input.placeholder = 'Nota rápida con fecha...';
+    input.addEventListener('click', (ev) => {
+      if (inSelection(handlers)) {
+        input.blur();
+        return;
+      }
+      ev.stopPropagation();
+    });
     const saveBtn = el('button', 'btn-primary btn-compact', '+ Nota');
     saveBtn.type = 'button';
     const submitNote = () => {
       const val = input.value.trim();
-      if (val && !handlers.isSelectionMode && handlers.onAddQuickNote) {
+      if (val && !inSelection(handlers) && handlers.onAddQuickNote) {
         input.value = '';
         handlers.onAddQuickNote(lead, val);
       }
     };
     saveBtn.addEventListener('click', (ev) => {
+      if (inSelection(handlers)) { return; }
       ev.stopPropagation();
       submitNote();
     });
@@ -251,9 +290,9 @@ function attachCardGestures(card, lead, handlers) {
   };
 
   card.addEventListener('pointerdown', (ev) => {
-    if (handlers.isSelectionMode) { return; }
+    if (inSelection(handlers)) { return; }
     if (ev.button && ev.button !== 0) { return; }
-    if (ev.target.closest('button') ? true : Boolean(ev.target.closest('input'))) { return; }
+    if (ev.target.closest('button') || ev.target.closest('input')) { return; }
     startX = ev.clientX;
     startY = ev.clientY;
     longPressTriggered = false;
@@ -270,7 +309,7 @@ function attachCardGestures(card, lead, handlers) {
 
   card.addEventListener('pointermove', (ev) => {
     if (!pressTimer) { return; }
-    if (Math.abs(ev.clientX - startX) > 10 ? true : Math.abs(ev.clientY - startY) > 10) {
+    if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) {
       cancelPress();
     }
   });
@@ -278,14 +317,14 @@ function attachCardGestures(card, lead, handlers) {
   card.addEventListener('pointerup', cancelPress);
   card.addEventListener('pointercancel', cancelPress);
   card.addEventListener('contextmenu', (ev) => {
-    if (pressTimer ? true : longPressTriggered) {
+    if (pressTimer || longPressTriggered) {
       ev.preventDefault();
       longPressTriggered = false;
     }
   });
 
   card.addEventListener('click', (ev) => {
-    if (handlers.isSelectionMode) {
+    if (inSelection(handlers)) {
       ev.preventDefault();
       ev.stopPropagation();
       if (handlers.onToggleSelect) {
@@ -299,10 +338,12 @@ function buildHeader(lead, statusKey, handlers) {
   const header = el('div', 'lead-header');
   const leftWrap = el('div', 'lead-header-left');
 
-  if (handlers.isSelectionMode) {
-    const checkBox = el('span', handlers.isSelected ? 'select-check checked' : 'select-check', handlers.isSelected ? '✓' : '');
-    leftWrap.appendChild(checkBox);
-  }
+  const isSelMode = Boolean(handlers.isSelectionMode);
+  const checkCls = !isSelMode
+    ? 'select-check hidden'
+    : (handlers.isSelected ? 'select-check checked' : 'select-check');
+  const checkBox = el('span', checkCls, isSelMode && handlers.isSelected ? '✓' : '');
+  leftWrap.appendChild(checkBox);
 
   const infoBox = el('div');
   infoBox.appendChild(el('h3', 'lead-title', lead.name));
@@ -314,8 +355,9 @@ function buildHeader(lead, statusKey, handlers) {
   const rubroBtn = el('button', hasRubro ? 'rubro-btn rubro-' + lead.rubro : 'rubro-btn rubro-empty', hasRubro ? RUBRO_LABELS[lead.rubro] : '+ Rubro');
   rubroBtn.type = 'button';
   rubroBtn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
     ev.stopPropagation();
-    if (!handlers.isSelectionMode && handlers.onPickRubro) {
+    if (handlers.onPickRubro) {
       handlers.onPickRubro(lead);
     }
   });
@@ -327,8 +369,9 @@ function buildHeader(lead, statusKey, handlers) {
   const pillBtn = el('button', 'status-pill status-' + statusKey, STATUS_LABELS[statusKey] ? STATUS_LABELS[statusKey] : statusKey);
   pillBtn.type = 'button';
   pillBtn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
     ev.stopPropagation();
-    if (!handlers.isSelectionMode && handlers.onQuickStatus) {
+    if (handlers.onQuickStatus) {
       handlers.onQuickStatus(lead);
     }
   });
@@ -336,6 +379,17 @@ function buildHeader(lead, statusKey, handlers) {
   header.appendChild(leftWrap);
   header.appendChild(pillBtn);
   return header;
+}
+
+function createCardActionBtn(cls, label, handlers, callback) {
+  const btn = el('button', cls, label);
+  btn.type = 'button';
+  btn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
+    ev.stopPropagation();
+    callback();
+  });
+  return btn;
 }
 
 export function createLeadCard(lead, handlers) {
@@ -362,45 +416,22 @@ export function createLeadCard(lead, handlers) {
 
   const actions = el('div', 'lead-actions');
   if (statusKey === 'sin_whatsapp') {
-    const btnCall = el('button', 'btn-warning', 'Llamar');
-    btnCall.type = 'button';
-    btnCall.addEventListener('click', () => handlers.onCall(lead));
-    const btnSearch = el('button', 'btn-secondary', 'Buscar');
-    btnSearch.type = 'button';
-    btnSearch.addEventListener('click', () => handlers.onSearch(lead));
-    actions.appendChild(btnCall);
-    actions.appendChild(btnSearch);
+    actions.appendChild(createCardActionBtn('btn-warning', 'Llamar', handlers, () => handlers.onCall(lead)));
+    actions.appendChild(createCardActionBtn('btn-secondary', 'Buscar', handlers, () => handlers.onSearch(lead)));
   } else {
-    const btnWhatsApp = el('button', 'btn-whatsapp', 'WhatsApp');
-    btnWhatsApp.type = 'button';
-    btnWhatsApp.addEventListener('click', () => handlers.onWhatsApp(lead));
-    actions.appendChild(btnWhatsApp);
+    actions.appendChild(createCardActionBtn('btn-whatsapp', 'WhatsApp', handlers, () => handlers.onWhatsApp(lead)));
   }
 
   if (!isFinalStatus(statusKey) && handlers.onOpenReminderModal) {
-    const btnAgenda = el('button', 'btn-calendar', 'Agendar');
-    btnAgenda.type = 'button';
-    btnAgenda.addEventListener('click', () => handlers.onOpenReminderModal(lead));
-    actions.appendChild(btnAgenda);
+    actions.appendChild(createCardActionBtn('btn-calendar', 'Agendar', handlers, () => handlers.onOpenReminderModal(lead)));
   }
 
   if (phaseInfo.phaseCode === 'listo_descartar' && handlers.onQuickDiscard) {
-    const btnDiscard = el('button', 'btn-secondary', 'Descartar');
-    btnDiscard.type = 'button';
-    btnDiscard.addEventListener('click', () => handlers.onQuickDiscard(lead));
-    actions.appendChild(btnDiscard);
+    actions.appendChild(createCardActionBtn('btn-secondary', 'Descartar', handlers, () => handlers.onQuickDiscard(lead)));
   }
 
-  const btnEdit = el('button', 'btn-secondary', 'Editar');
-  btnEdit.type = 'button';
-  btnEdit.addEventListener('click', () => handlers.onEdit(lead));
-
-  const btnDelete = el('button', 'btn-danger', 'Borrar');
-  btnDelete.type = 'button';
-  btnDelete.addEventListener('click', () => handlers.onDelete(lead));
-
-  actions.appendChild(btnEdit);
-  actions.appendChild(btnDelete);
+  actions.appendChild(createCardActionBtn('btn-secondary', 'Editar', handlers, () => handlers.onEdit(lead)));
+  actions.appendChild(createCardActionBtn('btn-danger', 'Borrar', handlers, () => handlers.onDelete(lead)));
   card.appendChild(actions);
 
   return card;

@@ -1,8 +1,9 @@
 import {
   getAllLeads, saveLead, addTagToLead, toggleInterestTag,
-  addQuickNoteToLead, removeQuickNoteFromLead, renameTagAcrossLeads, getAutoBackupMeta
+  addQuickNoteToLead, removeQuickNoteFromLead, syncAllTagLabels,
+  getAutoBackupMeta, normalizePhone
 } from './services/db-service.js';
-import { evaluateLeadPhase } from './services/phase-engine.js';
+import { evaluateLeadPhase, getInterestTagsCatalog } from './services/phase-engine.js';
 import { scheduleNativeReminder, cancelNativeReminder } from './services/reminder-service.js';
 import { renderDashboardView } from './modules/dashboard-view.js';
 import { createCalendarScheduler } from './modules/calendar-scheduler.js';
@@ -12,6 +13,7 @@ import { createListRenderer } from './modules/list-renderer.js';
 import { createFormModalsController } from './modules/form-modals-controller.js';
 
 const $ = (id) => document.getElementById(id);
+const PENDING_WA_KEY = 'crm_prospeccion_pending_wa_v2';
 
 const state = {
   leads: [], activeView: 'dashboard', filter: 'todos', queueFilter: '',
@@ -63,7 +65,7 @@ const scheduler = createCalendarScheduler({
   if (target) {
     return { name: target.name, phone: target.phone, notes: target.notes };
   }
-  return { name: dom.leadName.value, phone: dom.leadPhone.value, notes: dom.leadNotes.value };
+  return { name: dom.leadName.value, phone: normalizePhone(dom.leadPhone.value), notes: dom.leadNotes.value };
 });
 
 const campaignCtrl = createCampaignController({
@@ -79,10 +81,13 @@ const campaignCtrl = createCampaignController({
   newCampaignModal: $('new-campaign-modal'), newCampaignForm: $('new-campaign-form'),
   newCampaignName: $('new-campaign-name'), newCampaignDesc: $('new-campaign-desc'),
   newCampaignClone: $('new-campaign-clone'), newCampaignFeedback: $('new-campaign-feedback'),
-  btnCancelNewCampaign: $('btn-cancel-new-campaign')
+  btnCancelNewCampaign: $('btn-cancel-new-campaign'),
+  btnSubmitNewCampaign: $('btn-submit-new-campaign')
 }, state, {
   onFilterChange: () => renderActiveView(),
-  onDataChanged: () => refreshLeads()
+  onDataChanged: () => refreshLeads(),
+  getLeadCount: () => state.leads.length,
+  onCancelNativeReminder: (id) => cancelNativeReminder(id)
 });
 
 const selectionCtrl = createSelectionController({
@@ -94,6 +99,7 @@ const selectionCtrl = createSelectionController({
   rubroPickerOptions: $('rubro-picker-options'), btnRubroPickerCancel: $('btn-rubro-picker-cancel')
 }, state, {
   onRender: () => listRenderer.render(state.leads),
+  onSyncSelectionUi: () => listRenderer.syncSelectionUi(),
   onDataChanged: () => refreshLeads(),
   getVisibleLeadIds: () => listRenderer.getVisibleIds(),
   onOpenBulkTagPicker: (ids) => campaignCtrl.openBulkSelectedTagModal(ids, () => selectionCtrl.exitSelection()),
@@ -153,8 +159,12 @@ function syncFilterChipsUi() {
     btn.classList.toggle('active', btn.dataset.filter === state.filter);
   });
   if (state.queueFilter) {
-    const label = QUEUE_NAMES[state.queueFilter] ? QUEUE_NAMES[state.queueFilter] : 'Etiqueta de interés activa';
-    dom.queueFilterText.textContent = 'Cola activa: ' + label;
+    let label = QUEUE_NAMES[state.queueFilter] ? QUEUE_NAMES[state.queueFilter] : '';
+    if (!label && state.queueFilter.startsWith('int_')) {
+      const foundTag = getInterestTagsCatalog().find((t) => t.id === state.queueFilter);
+      label = foundTag ? foundTag.label : 'Etiqueta de interés activa';
+    }
+    dom.queueFilterText.textContent = 'Cola activa: ' + (label || 'Filtro activo');
     dom.queueFilterBanner.classList.remove('hidden');
   } else {
     dom.queueFilterBanner.classList.add('hidden');
@@ -230,6 +240,15 @@ async function refreshLeads() {
   await renderActiveView();
 }
 
+function showPendingWhatsAppPrompt() {
+  if (!state.pendingWhatsAppLead) {
+    return;
+  }
+  const name = state.pendingWhatsAppLead.leadName || 'este contacto';
+  dom.statusModalMessage.textContent = '¿Cómo te fue al contactar a ' + name + ' por WhatsApp?';
+  dom.statusModal.classList.remove('hidden');
+}
+
 async function launchWhatsAppWithText(lead, customText, tpl) {
   state.activePickerLead = null;
   dom.pickerModal.classList.add('hidden');
@@ -237,16 +256,28 @@ async function launchWhatsAppWithText(lead, customText, tpl) {
   if (!waModule.openWhatsAppChat(lead, customText)) {
     return;
   }
-  let latestLead = lead;
-  if (tpl && tpl.id) {
-    const tagged = await addTagToLead(lead.id, { id: tpl.id, label: tpl.label, sentAt: Date.now() });
-    if (tagged) {
-      latestLead = tagged;
+  if (lead.status === 'nuevo') {
+    const pending = {
+      leadId: lead.id,
+      leadName: lead.name,
+      tpl: tpl && tpl.id ? { id: tpl.id, label: tpl.label, phase: Number(tpl.phase) || 0 } : null
+    };
+    state.pendingWhatsAppLead = pending;
+    try {
+      sessionStorage.setItem(PENDING_WA_KEY, JSON.stringify(pending));
+    } catch (error) {
+      return;
     }
-    await refreshLeads();
+    return;
   }
-  if (latestLead.status === 'nuevo') {
-    state.pendingWhatsAppLead = latestLead;
+  if (tpl && tpl.id) {
+    await addTagToLead(lead.id, {
+      id: tpl.id,
+      label: tpl.label,
+      phase: Number(tpl.phase) || 0,
+      sentAt: Date.now()
+    });
+    await refreshLeads();
   }
 }
 
@@ -264,17 +295,22 @@ async function openTemplatePicker(lead) {
     return scoreB - scoreA;
   });
 
-  templates.forEach((tpl) => {
-    if (tpl.rubro && lead.rubro && tpl.rubro !== lead.rubro) {
-      return;
-    }
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary';
-    btn.textContent = tpl.label;
-    btn.addEventListener('click', () => launchWhatsAppWithText(lead, tplModule.renderTemplateText(tpl.text, lead), tpl));
-    dom.pickerButtonsList.appendChild(btn);
-  });
+  const eligible = templates.filter((tpl) => !(tpl.rubro && lead.rubro && tpl.rubro !== lead.rubro));
+  if (eligible.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'helper-hint';
+    hint.textContent = 'No hay plantillas en esta campaña. Usa "Mensajes" para crear una o envía mensaje libre.';
+    dom.pickerButtonsList.appendChild(hint);
+  } else {
+    eligible.forEach((tpl) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary';
+      btn.textContent = tpl.label;
+      btn.addEventListener('click', () => launchWhatsAppWithText(lead, tplModule.renderTemplateText(tpl.text, lead), tpl));
+      dom.pickerButtonsList.appendChild(btn);
+    });
+  }
   dom.pickerModal.classList.remove('hidden');
 }
 
@@ -334,18 +370,14 @@ function bindEvents() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.pendingWhatsAppLead) {
-      dom.statusModalMessage.textContent = '¿Cómo te fue al contactar a ' + state.pendingWhatsAppLead.name + ' por WhatsApp?';
-      dom.statusModal.classList.remove('hidden');
+    if (document.visibilityState === 'visible') {
+      showPendingWhatsAppPrompt();
     }
   });
 }
 
 function initCapacitorDeepLinks() {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  if (!window.Capacitor ? true : !window.Capacitor.Plugins) {
+  if (typeof window === 'undefined' || !window.Capacitor || !window.Capacitor.Plugins) {
     return;
   }
   const localNotifs = window.Capacitor.Plugins.LocalNotifications;
@@ -376,9 +408,31 @@ function registerServiceWorker() {
 
 async function syncStoredTagLabels() {
   const tplModule = await import('./services/template-service.js');
-  const templates = tplModule.getTemplates('all');
-  for (let i = 0; i < templates.length; i += 1) {
-    await renameTagAcrossLeads(templates[i].id, templates[i].label);
+  const labelsMap = {};
+  tplModule.getTemplates('all').forEach((tpl) => {
+    labelsMap[tpl.id] = tpl.label;
+  });
+  await syncAllTagLabels(labelsMap);
+}
+
+function restorePendingWhatsApp() {
+  try {
+    const raw = sessionStorage.getItem(PENDING_WA_KEY);
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.leadId) {
+      const match = state.leads.find((l) => l.id === parsed.leadId && l.status === 'nuevo');
+      if (match) {
+        state.pendingWhatsAppLead = parsed;
+        showPendingWhatsAppPrompt();
+        return;
+      }
+    }
+    sessionStorage.removeItem(PENDING_WA_KEY);
+  } catch (error) {
+    return;
   }
 }
 
@@ -389,6 +443,7 @@ async function initApp() {
   await syncStoredTagLabels();
   await campaignCtrl.refreshFilterDropdown();
   await refreshLeads();
+  restorePendingWhatsApp();
 }
 
 initApp();

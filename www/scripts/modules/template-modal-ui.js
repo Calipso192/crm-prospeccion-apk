@@ -16,6 +16,26 @@ function showModalFeedback(el, text) {
   el.classList.remove('hidden');
 }
 
+function attachTwoStepDelete(btn, onConfirmedDelete) {
+  let armed = false;
+  let resetTimer = null;
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = '¿Confirmar?';
+      resetTimer = setTimeout(() => {
+        armed = false;
+        btn.textContent = 'Borrar';
+      }, 3000);
+      return;
+    }
+    clearTimeout(resetTimer);
+    armed = false;
+    btn.textContent = 'Borrar';
+    await onConfirmedDelete();
+  });
+}
+
 function buildPhaseSelect(selectedPhase) {
   const select = document.createElement('select');
   select.setAttribute('aria-label', 'Fase de la plantilla');
@@ -84,9 +104,18 @@ export async function syncCampaignFilterOptions(selectEl) {
 export async function renderTemplatesEditor(containerEl, callbacks) {
   const tplModule = await import('../services/template-service.js');
   const hooks = callbacks ? callbacks : {};
+  const list = tplModule.getTemplates();
   containerEl.innerHTML = '';
 
-  tplModule.getTemplates().forEach((tpl) => {
+  if (list.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No hay plantillas en esta campaña. Agrega una abajo.';
+    containerEl.appendChild(empty);
+    return;
+  }
+
+  list.forEach((tpl) => {
     const itemBox = document.createElement('div');
     itemBox.className = 'template-item-card';
 
@@ -116,7 +145,8 @@ export async function renderTemplatesEditor(containerEl, callbacks) {
       if (hooks.onOpenBulkTag) {
         hooks.onOpenBulkTag({
           id: tpl.id,
-          label: labelInput.value.trim() ? labelInput.value.trim() : tpl.label
+          label: labelInput.value.trim() ? labelInput.value.trim() : tpl.label,
+          phase: Number(phaseSelect.value)
         });
       }
     });
@@ -145,7 +175,7 @@ export async function renderTemplatesEditor(containerEl, callbacks) {
     btnRemove.type = 'button';
     btnRemove.className = 'btn-danger btn-compact';
     btnRemove.textContent = 'Borrar';
-    btnRemove.addEventListener('click', async () => {
+    attachTwoStepDelete(btnRemove, async () => {
       tplModule.deleteTemplate(tpl.id);
       if (hooks.onTemplatesChanged) {
         await hooks.onTemplatesChanged();
@@ -179,6 +209,14 @@ export async function renderManualTagOptions(lead, listEl, onPickTag) {
   const existingTags = Array.isArray(lead.sentTags) ? lead.sentTags : [];
   listEl.innerHTML = '';
 
+  if (templates.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'helper-hint';
+    hint.textContent = 'No hay plantillas en la campaña activa para asignar como fase.';
+    listEl.appendChild(hint);
+    return;
+  }
+
   templates.forEach((tpl) => {
     const alreadyAssigned = existingTags.some((tag) => tag.id === tpl.id);
     const btn = document.createElement('button');
@@ -211,6 +249,7 @@ export async function applyBulkTagSelection(tpl, checksEl, feedbackEl, sentAt, o
   const updatedCount = await bulkAssignTagByStatuses(statuses, {
     id: tpl.id,
     label: tpl.label,
+    phase: Number(tpl.phase) || 0,
     sentAt: sentAt
   });
   await onComplete();

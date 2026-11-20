@@ -26,6 +26,26 @@ function buildToneSelect(selectedTone) {
   return select;
 }
 
+function attachTwoStepDelete(btn, onConfirmedDelete) {
+  let armed = false;
+  let resetTimer = null;
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = '¿Confirmar?';
+      resetTimer = setTimeout(() => {
+        armed = false;
+        btn.textContent = 'Borrar';
+      }, 3000);
+      return;
+    }
+    clearTimeout(resetTimer);
+    armed = false;
+    btn.textContent = 'Borrar';
+    await onConfirmedDelete();
+  });
+}
+
 export function syncInterestFilterOptions(selectEl) {
   if (!selectEl) {
     return;
@@ -94,7 +114,7 @@ export function renderInterestTagsEditor(containerEl, onCatalogChanged) {
     btnDelete.type = 'button';
     btnDelete.className = 'btn-danger btn-compact';
     btnDelete.textContent = 'Borrar';
-    btnDelete.addEventListener('click', async () => {
+    attachTwoStepDelete(btnDelete, async () => {
       deleteInterestTagDefinition(tag.id);
       await removeInterestTagAcrossLeads(tag.id);
       if (onCatalogChanged) {

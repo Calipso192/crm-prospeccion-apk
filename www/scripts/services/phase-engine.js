@@ -48,7 +48,7 @@ export function getInterestTagsCatalog() {
       return DEFAULT_INTEREST_TAGS.slice();
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed.map((item) => ({
         id: String(item.id),
         label: item.label ? String(item.label).trim() : 'Etiqueta',
@@ -71,8 +71,9 @@ export function addInterestTagDefinition(label, tone) {
     throw new Error('Escribe un nombre para la etiqueta de interés.');
   }
   const catalog = getInterestTagsCatalog();
+  const suffix = Math.random().toString(36).slice(2, 6);
   const newItem = {
-    id: 'int_' + Date.now(),
+    id: 'int_' + Date.now() + '_' + suffix,
     label: cleanLabel,
     tone: tone ? String(tone).trim() : 'hot'
   };
@@ -100,13 +101,78 @@ export function deleteInterestTagDefinition(id) {
   saveInterestTagsCatalog(catalog);
 }
 
+export function mergeInterestTagsCatalog(incomingCatalog, incomingLeads) {
+  const current = getInterestTagsCatalog();
+  const defaultById = new Map(DEFAULT_INTEREST_TAGS.map((t) => [t.id, t]));
+  const indexById = new Map(current.map((t, idx) => [t.id, idx]));
+  const merged = current.slice();
+  let added = 0;
+  let updated = 0;
+
+  if (Array.isArray(incomingCatalog)) {
+    incomingCatalog.forEach((raw) => {
+      if (!raw || !raw.id) {
+        return;
+      }
+      const inc = {
+        id: String(raw.id),
+        label: raw.label ? String(raw.label).trim() : 'Etiqueta',
+        tone: raw.tone ? String(raw.tone).trim() : 'hot'
+      };
+      if (!indexById.has(inc.id)) {
+        indexById.set(inc.id, merged.length);
+        merged.push(inc);
+        added += 1;
+        return;
+      }
+      const idx = indexById.get(inc.id);
+      const localItem = merged[idx];
+      const defItem = defaultById.get(inc.id);
+      if (defItem && localItem.label === defItem.label && localItem.tone === defItem.tone) {
+        if (inc.label !== defItem.label || inc.tone !== defItem.tone) {
+          merged[idx] = inc;
+          updated += 1;
+        }
+      }
+    });
+  }
+
+  if (Array.isArray(incomingLeads)) {
+    incomingLeads.forEach((lead) => {
+      if (!lead || !Array.isArray(lead.interestTags)) {
+        return;
+      }
+      lead.interestTags.forEach((tag) => {
+        if (!tag || !tag.id) {
+          return;
+        }
+        const id = String(tag.id);
+        if (!indexById.has(id)) {
+          indexById.set(id, merged.length);
+          merged.push({
+            id: id,
+            label: tag.label ? String(tag.label).trim() : id,
+            tone: 'hot'
+          });
+          added += 1;
+        }
+      });
+    });
+  }
+
+  if (added > 0 || updated > 0) {
+    saveInterestTagsCatalog(merged);
+  }
+  return { added: added, updated: updated };
+}
+
 export function computeRetroactiveTimestamp(daysAgo) {
   const cleanDays = Number(daysAgo) > 0 ? Number(daysAgo) : 0;
   return Date.now() - (cleanDays * DAY_MS);
 }
 
 function getLatestSentTag(sentTags) {
-  if (!Array.isArray(sentTags) ? true : sentTags.length === 0) {
+  if (!Array.isArray(sentTags) || sentTags.length === 0) {
     return null;
   }
   let latest = sentTags[0];
@@ -116,6 +182,39 @@ function getLatestSentTag(sentTags) {
     }
   }
   return latest;
+}
+
+function resolveTagPhase(tag) {
+  const explicit = Number(tag.phase);
+  if (explicit === 1 || explicit === 2 || explicit === 3) {
+    return explicit;
+  }
+  if (tag.phase === undefined) {
+    if (tag.id === 'tpl_1') { return 1; }
+    if (tag.id === 'tpl_2') { return 2; }
+    if (tag.id === 'tpl_3') { return 3; }
+  }
+  return 0;
+}
+
+function resolveCompletedPhaseAndTime(tags) {
+  let maxPhase = 0;
+  tags.forEach((t) => {
+    const p = resolveTagPhase(t);
+    if (p > maxPhase) {
+      maxPhase = p;
+    }
+  });
+  if (maxPhase > 0) {
+    const phaseTags = tags.filter((t) => resolveTagPhase(t) === maxPhase);
+    const refTag = getLatestSentTag(phaseTags) || getLatestSentTag(tags);
+    return { completedPhase: maxPhase, referenceSentAt: Number(refTag.sentAt) };
+  }
+  const latest = getLatestSentTag(tags);
+  return {
+    completedPhase: Math.min(3, tags.length),
+    referenceSentAt: Number(latest.sentAt)
+  };
 }
 
 export function evaluateLeadPhase(lead, nowMs) {
@@ -134,19 +233,19 @@ export function evaluateLeadPhase(lead, nowMs) {
     return { phaseCode: 'fase_1_pendiente', phaseNumber: 0, suggestedPhase: 1, isActionDue: true, badgeText: 'Sin toque · Fase 1', detailText: 'Enviar 1er mensaje' };
   }
 
-  const lastTag = getLatestSentTag(tags);
-  const elapsedMs = Math.max(0, now - Number(lastTag.sentAt));
+  const resolved = resolveCompletedPhaseAndTime(tags);
+  const elapsedMs = Math.max(0, now - resolved.referenceSentAt);
   const daysElapsed = Math.floor(elapsedMs / DAY_MS);
   const hoursElapsed = Math.floor(elapsedMs / HOUR_MS);
 
-  if (tagCount === 1) {
+  if (resolved.completedPhase === 1) {
     if (elapsedMs >= PHASE_2_MS) {
       return { phaseCode: 'listo_fase_2', phaseNumber: 1, suggestedPhase: 2, isActionDue: true, badgeText: 'Listo Fase 2', detailText: 'Hace ' + daysElapsed + 'd desde Fase 1' };
     }
     const remDays = Math.max(1, Math.ceil((PHASE_2_MS - elapsedMs) / DAY_MS));
     return { phaseCode: 'espera_fase_1', phaseNumber: 1, suggestedPhase: 2, isActionDue: false, badgeText: 'Fase 1 · ' + daysElapsed + 'd', detailText: 'Fase 2 en ' + remDays + 'd' };
   }
-  if (tagCount === 2) {
+  if (resolved.completedPhase === 2) {
     if (elapsedMs >= PHASE_3_MS) {
       return { phaseCode: 'listo_fase_3', phaseNumber: 2, suggestedPhase: 3, isActionDue: true, badgeText: 'Listo Fase 3', detailText: 'Hace ' + daysElapsed + 'd desde Fase 2' };
     }
@@ -229,6 +328,7 @@ export function buildDashboardSnapshot(leads, nowMs) {
       funnel.contactadoTotal += 1;
       const phase = evaluateLeadPhase(lead, now);
       if (phase.phaseNumber <= 1) { funnel.contactadoF1 += 1; } else if (phase.phaseNumber === 2) { funnel.contactadoF2 += 1; } else { funnel.contactadoF3 += 1; }
+      if (phase.phaseCode === 'fase_1_pendiente') { queue.nuevosSinFase1 += 1; }
       if (phase.phaseCode === 'listo_fase_2') { queue.listosFase2 += 1; }
       if (phase.phaseCode === 'listo_fase_3') { queue.listosFase3 += 1; }
       if (phase.phaseCode === 'listo_descartar') { queue.listosDescartar += 1; }
@@ -260,6 +360,10 @@ export function buildDashboardSnapshot(leads, nowMs) {
     item.conversionRate = item.total > 0 ? Math.round((item.sold / item.total) * 100) : 0;
     return item;
   });
+  if (rubroMap.otros.total > 0) {
+    rubroMap.otros.conversionRate = Math.round((rubroMap.otros.sold / rubroMap.otros.total) * 100);
+    rubroStats.push(rubroMap.otros);
+  }
 
   return {
     queue: queue,
@@ -281,7 +385,9 @@ export function matchesQueueFilter(lead, queueKey, nowMs) {
   const now = nowMs ? nowMs : Date.now();
   const st = lead.status ? lead.status : 'nuevo';
   if (queueKey === 'seg_urgente') { return st === 'seguimiento' && evaluateReminderUrgency(lead, now).rank <= 1; }
-  if (queueKey === 'nuevo_f1') { return st === 'nuevo'; }
+  if (queueKey === 'nuevo_f1') {
+    return st === 'nuevo' || (st === 'contactado' && (!Array.isArray(lead.sentTags) || lead.sentTags.length === 0));
+  }
   if (queueKey === 'listo_f2') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_fase_2'; }
   if (queueKey === 'listo_f3') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_fase_3'; }
   if (queueKey === 'listo_descartar') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_descartar'; }

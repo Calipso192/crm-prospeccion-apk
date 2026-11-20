@@ -1,3 +1,6 @@
+import { normalizePhone } from './lead-schema.js';
+import { isCapacitorNative } from './whatsapp-service.js';
+
 function formatBackupTimestamp(dateObj) {
   const pad = (num) => (num < 10 ? '0' + num : String(num));
   const year = dateObj.getFullYear();
@@ -8,24 +11,85 @@ function formatBackupTimestamp(dateObj) {
   return year + '-' + month + '-' + day + '-' + hours + '-' + minutes;
 }
 
-export function buildBackupPayload(leads, templates, campaigns) {
+function getCapacitorPlugin(pluginName) {
+  if (typeof window === 'undefined' || !window.Capacitor || !window.Capacitor.Plugins) {
+    return null;
+  }
+  return window.Capacitor.Plugins[pluginName] || null;
+}
+
+async function writeNativeBackupFile(fsPlugin, fileName, jsonString, preferredDirs) {
+  let lastError = null;
+  for (let i = 0; i < preferredDirs.length; i += 1) {
+    const dir = preferredDirs[i];
+    try {
+      if (dir === 'DOCUMENTS' && typeof fsPlugin.requestPermissions === 'function') {
+        try {
+          await fsPlugin.requestPermissions();
+        } catch (permErr) {
+          /* Android 11+ puede no requerir permiso para documentos propios */
+        }
+      }
+      const res = await fsPlugin.writeFile({
+        path: fileName,
+        data: jsonString,
+        directory: dir,
+        encoding: 'utf8',
+        recursive: true
+      });
+      let uri = res && res.uri ? String(res.uri) : '';
+      if (!uri && typeof fsPlugin.getUri === 'function') {
+        try {
+          const uriRes = await fsPlugin.getUri({ path: fileName, directory: dir });
+          uri = uriRes && uriRes.uri ? String(uriRes.uri) : '';
+        } catch (uriErr) {
+          uri = '';
+        }
+      }
+      const folderLabel = dir === 'DOCUMENTS' ? 'Documentos' : 'Cache';
+      const displayPath = uri ? folderLabel + '/' + fileName + ' (' + uri + ')' : folderLabel + '/' + fileName;
+      return {
+        fileName: fileName,
+        directory: dir,
+        uri: uri,
+        displayPath: displayPath,
+        usedFallback: i > 0
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  const msg = lastError && lastError.message ? lastError.message : 'Error de escritura en almacenamiento';
+  throw new Error('No se pudo guardar el respaldo en el dispositivo: ' + msg);
+}
+
+export function buildBackupPayload(leads, templates, campaigns, interestTagsCatalog, activeCampaignId) {
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
+    activeCampaignId: activeCampaignId ? String(activeCampaignId) : '',
     leads: Array.isArray(leads) ? leads : [],
     templates: Array.isArray(templates) ? templates : [],
-    campaigns: Array.isArray(campaigns) ? campaigns : []
+    campaigns: Array.isArray(campaigns) ? campaigns : [],
+    interestTagsCatalog: Array.isArray(interestTagsCatalog) ? interestTagsCatalog : []
   };
 }
 
-export function downloadBackupFile(leads, templates, campaigns) {
-  const payload = buildBackupPayload(leads, templates, campaigns);
+export async function downloadBackupFile(leads, templates, campaigns, interestTagsCatalog, activeCampaignId) {
+  const payload = buildBackupPayload(leads, templates, campaigns, interestTagsCatalog, activeCampaignId);
   const jsonString = JSON.stringify(payload, null, 2);
+  const fileName = 'respaldo-crm-' + formatBackupTimestamp(new Date()) + '.json';
+
+  if (isCapacitorNative()) {
+    const fsPlugin = getCapacitorPlugin('Filesystem');
+    if (fsPlugin && typeof fsPlugin.writeFile === 'function') {
+      const saved = await writeNativeBackupFile(fsPlugin, fileName, jsonString, ['DOCUMENTS', 'CACHE']);
+      return Object.assign({ native: true }, saved);
+    }
+  }
+
   const blob = new Blob([jsonString], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-
-  const timeTag = formatBackupTimestamp(new Date());
-  const fileName = 'respaldo-crm-' + timeTag + '.json';
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;
@@ -35,16 +99,38 @@ export function downloadBackupFile(leads, templates, campaigns) {
   setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 1500);
-  return fileName;
+  return { native: false, fileName: fileName, displayPath: fileName, usedFallback: false };
 }
 
-export async function shareBackupFile(leads, templates, campaigns) {
-  const payload = buildBackupPayload(leads, templates, campaigns);
+export async function shareBackupFile(leads, templates, campaigns, interestTagsCatalog, activeCampaignId) {
+  const payload = buildBackupPayload(leads, templates, campaigns, interestTagsCatalog, activeCampaignId);
   const jsonString = JSON.stringify(payload, null, 2);
-  const timeTag = formatBackupTimestamp(new Date());
-  const fileName = 'respaldo-crm-' + timeTag + '.json';
+  const fileName = 'respaldo-crm-' + formatBackupTimestamp(new Date()) + '.json';
 
-  if (typeof File !== 'undefined' && navigator.share && navigator.canShare) {
+  if (isCapacitorNative()) {
+    const fsPlugin = getCapacitorPlugin('Filesystem');
+    const sharePlugin = getCapacitorPlugin('Share');
+    if (fsPlugin && typeof fsPlugin.writeFile === 'function' && sharePlugin && typeof sharePlugin.share === 'function') {
+      const saved = await writeNativeBackupFile(fsPlugin, fileName, jsonString, ['CACHE']);
+      try {
+        await sharePlugin.share({
+          title: 'Respaldo CRM Prospección',
+          text: 'Copia de seguridad con ' + payload.leads.length + ' contactos.',
+          files: saved.uri ? [saved.uri] : [],
+          dialogTitle: 'Compartir respaldo JSON'
+        });
+        return { shared: true, native: true, fileName: fileName, uri: saved.uri, displayPath: saved.displayPath };
+      } catch (error) {
+        const msg = error && error.message ? String(error.message) : '';
+        if ((error && error.name === 'AbortError') || /cancel/i.test(msg)) {
+          return { shared: false, cancelled: true, native: true, fileName: fileName };
+        }
+        throw error;
+      }
+    }
+  }
+
+  if (typeof File !== 'undefined' && typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
     const fileObj = new File([jsonString], fileName, { type: 'application/json' });
     if (navigator.canShare({ files: [fileObj] })) {
       try {
@@ -53,17 +139,52 @@ export async function shareBackupFile(leads, templates, campaigns) {
           text: 'Copia de seguridad con ' + payload.leads.length + ' contactos.',
           files: [fileObj]
         });
-        return { shared: true, fileName: fileName };
+        return { shared: true, native: false, fileName: fileName };
       } catch (error) {
         if (error && error.name === 'AbortError') {
-          return { shared: false, cancelled: true, fileName: fileName };
+          return { shared: false, cancelled: true, native: false, fileName: fileName };
         }
       }
     }
   }
 
-  downloadBackupFile(leads, templates, campaigns);
-  return { shared: false, fallbackDownload: true, fileName: fileName };
+  const fallbackRes = await downloadBackupFile(leads, templates, campaigns, interestTagsCatalog, activeCampaignId);
+  return Object.assign({ shared: false, fallbackDownload: true }, fallbackRes);
+}
+
+export async function copyBackupJsonToClipboard(leads, templates, campaigns, interestTagsCatalog, activeCampaignId) {
+  const payload = buildBackupPayload(leads, templates, campaigns, interestTagsCatalog, activeCampaignId);
+  const jsonString = JSON.stringify(payload, null, 2);
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(jsonString);
+      return { copied: true, bytes: jsonString.length, leadsCount: payload.leads.length };
+    } catch (err) {
+      /* Fallback DOM para WebViews restringidos */
+    }
+  }
+
+  if (typeof document !== 'undefined' && document.body) {
+    const ta = document.createElement('textarea');
+    ta.value = jsonString;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    if (typeof ta.setSelectionRange === 'function') {
+      ta.setSelectionRange(0, jsonString.length);
+    }
+    const ok = typeof document.execCommand === 'function' ? document.execCommand('copy') : false;
+    document.body.removeChild(ta);
+    if (ok) {
+      return { copied: true, bytes: jsonString.length, leadsCount: payload.leads.length };
+    }
+  }
+
+  throw new Error('No se pudo copiar el JSON al portapapeles.');
 }
 
 export function readBackupFile(file) {
@@ -76,13 +197,13 @@ export function readBackupFile(file) {
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target.result);
-        const validLeads = Array.isArray(parsed.leads) ? parsed.leads : [];
-        const validTemplates = Array.isArray(parsed.templates) ? parsed.templates : [];
-        const validCampaigns = Array.isArray(parsed.campaigns) ? parsed.campaigns : [];
         resolve({
-          leads: validLeads,
-          templates: validTemplates,
-          campaigns: validCampaigns
+          version: Number(parsed.version) || 1,
+          activeCampaignId: parsed.activeCampaignId ? String(parsed.activeCampaignId) : '',
+          leads: Array.isArray(parsed.leads) ? parsed.leads : [],
+          templates: Array.isArray(parsed.templates) ? parsed.templates : [],
+          campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
+          interestTagsCatalog: Array.isArray(parsed.interestTagsCatalog) ? parsed.interestTagsCatalog : []
         });
       } catch (error) {
         reject(new Error('El archivo seleccionado no es un respaldo JSON válido.'));
@@ -93,14 +214,6 @@ export function readBackupFile(file) {
     };
     reader.readAsText(file);
   });
-}
-
-function normalizePhoneDigits(rawPhone) {
-  const digits = String(rawPhone).replace(/\D/g, '');
-  if (digits.length === 9 && digits.startsWith('9')) {
-    return '51' + digits;
-  }
-  return digits;
 }
 
 function extractLineParts(line) {
@@ -115,12 +228,24 @@ function extractLineParts(line) {
       };
     }
   }
+
+  const tailMatch = line.match(/^(.*?)\s+(\+?\d[\d\s\-()]{6,}\d)$/);
+  if (tailMatch && tailMatch[1].trim() && normalizePhone(tailMatch[2]).length >= 7) {
+    return {
+      name: tailMatch[1].trim(),
+      phone: tailMatch[2].trim()
+    };
+  }
+
   const dashIdx = line.lastIndexOf('-');
   if (dashIdx > 0) {
-    return {
-      name: line.slice(0, dashIdx).trim(),
-      phone: line.slice(dashIdx + 1).trim()
-    };
+    const right = line.slice(dashIdx + 1).trim();
+    if (normalizePhone(right).length >= 7) {
+      return {
+        name: line.slice(0, dashIdx).trim(),
+        phone: right
+      };
+    }
   }
   return null;
 }
@@ -134,7 +259,7 @@ export function parseBulkLeadsText(rawText, defaultRubro) {
   const parsedLeads = [];
 
   lines.forEach((rawLine) => {
-    const cleanLine = rawLine.replace(/^[\d\.\)\-\*\•\s]+/, '').trim();
+    const cleanLine = rawLine.replace(/^(?:\d+[\.\)\-]\s+|[\-\*\•]\s+)/, '').trim();
     if (!cleanLine) {
       return;
     }
@@ -142,7 +267,7 @@ export function parseBulkLeadsText(rawText, defaultRubro) {
     if (!parts) {
       return;
     }
-    const cleanPhone = normalizePhoneDigits(parts.phone);
+    const cleanPhone = normalizePhone(parts.phone);
     if (parts.name && cleanPhone.length >= 7) {
       parsedLeads.push({
         name: parts.name,
@@ -159,6 +284,13 @@ export function parseBulkLeadsText(rawText, defaultRubro) {
 
 export function evaluateBackupHealth(meta) {
   const changes = meta && Number(meta.changesSinceExport) > 0 ? Number(meta.changesSinceExport) : 0;
+  if (meta && meta.mirrorQuotaExceeded) {
+    return {
+      changes: changes,
+      needsExport: true,
+      statusLabel: 'Alerta: Memoria espejo llena · Exporta JSON'
+    };
+  }
   const needsExport = changes >= 20;
   let statusLabel = 'Auto-Backup interno activo';
   if (needsExport) {

@@ -168,11 +168,14 @@
   min-width: 4px;
 }
 
+.dash-bar-fill.bar-empty { min-width: 0; }
+
 .stage-nuevo { background-color: var(--status-nuevo); }
 .stage-contactado { background-color: var(--status-contactado); }
 .stage-seguimiento { background-color: var(--status-seguimiento); }
 .stage-vendido { background-color: var(--status-vendido); }
 .stage-descartado { background-color: var(--status-descartado); }
+.stage-sin_whatsapp { background-color: var(--status-sin-whatsapp); }
 
 .dash-kpi-grid {
   display: grid;
@@ -371,4 +374,39 @@ button.lead-reminder-tag { min-height: 28px; padding: 2px 8px; }
 .lead-card-highlight {
   border-color: var(--accent-whatsapp);
   box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.35);
+}
+
+.btn-notes-more {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.app-toast {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 18px;
+  z-index: 120;
+  max-width: 520px;
+  margin: 0 auto;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-modal);
+  word-break: break-word;
+}
+
+.app-toast.toast-error {
+  border-color: var(--accent-danger);
 }

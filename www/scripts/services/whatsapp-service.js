@@ -1,17 +1,8 @@
-const DEFAULT_COUNTRY_CODE = '51';
+import { normalizePhone } from './lead-schema.js';
 
-export function sanitizePhone(rawPhone) {
-  if (!rawPhone) {
-    return '';
-  }
-  const digits = String(rawPhone).replace(/\D/g, '');
-  if (digits.length === 9 && digits.startsWith('9')) {
-    return DEFAULT_COUNTRY_CODE + digits;
-  }
-  return digits;
-}
+export const sanitizePhone = normalizePhone;
 
-function isCapacitorNative() {
+export function isCapacitorNative() {
   if (typeof window === 'undefined') {
     return false;
   }
@@ -25,7 +16,7 @@ function isCapacitorNative() {
   return Boolean(cap.isNative);
 }
 
-function openExternalTarget(targetUrl) {
+export function openExternalTarget(targetUrl) {
   if (!targetUrl) {
     return false;
   }

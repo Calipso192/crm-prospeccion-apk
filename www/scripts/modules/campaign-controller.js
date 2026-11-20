@@ -10,6 +10,7 @@ import {
 } from '../services/phase-engine.js';
 import {
   createCampaign,
+  getActiveCampaign,
   setActiveCampaign
 } from '../services/template-service.js';
 import {
@@ -51,6 +52,17 @@ export function matchesRubroAndCampaign(lead, filterState) {
 export function createCampaignController(elements, filterState, callbacks) {
   let bulkTargetTpl = null;
   let selectedRetroDays = 0;
+  let campaignConfirmPending = false;
+
+  function resetCampaignConfirm() {
+    campaignConfirmPending = false;
+    if (elements.btnSubmitNewCampaign) {
+      elements.btnSubmitNewCampaign.textContent = 'Iniciar Campaña';
+    }
+    if (elements.newCampaignFeedback) {
+      elements.newCampaignFeedback.classList.add('hidden');
+    }
+  }
 
   function renderRetroChips() {
     if (!elements.tagRetroactiveRow) {
@@ -94,6 +106,7 @@ export function createCampaignController(elements, filterState, callbacks) {
       await addTagToLead(targetLead.id, {
         id: tpl.id,
         label: tpl.label,
+        phase: Number(tpl.phase) || 0,
         sentAt: sentAt
       });
       await callbacks.onDataChanged();
@@ -123,12 +136,18 @@ export function createCampaignController(elements, filterState, callbacks) {
         if (exists) {
           return false;
         }
-        record.sentTags.push({
+        const hadPrior = record.sentTags.length > 0 || record.quickNotes.length > 0 || record.interestTags.length > 0;
+        const entry = {
           id: String(tpl.id),
           label: tpl.label ? String(tpl.label).trim() : String(tpl.id),
           sentAt: sentAt
-        });
-        record.lastContactAt = sentAt;
+        };
+        if (tpl.phase !== undefined && tpl.phase !== null) {
+          const cleanPhase = Number(tpl.phase);
+          entry.phase = (cleanPhase === 1 || cleanPhase === 2 || cleanPhase === 3) ? cleanPhase : 0;
+        }
+        record.sentTags.push(entry);
+        record.lastContactAt = hadPrior ? Math.max(Number(record.lastContactAt) || 0, sentAt) : sentAt;
         record.updatedAt = now;
         return true;
       });
@@ -162,9 +181,7 @@ export function createCampaignController(elements, filterState, callbacks) {
     if (elements.newCampaignForm) {
       elements.newCampaignForm.reset();
     }
-    if (elements.newCampaignFeedback) {
-      elements.newCampaignFeedback.classList.add('hidden');
-    }
+    resetCampaignConfirm();
     elements.newCampaignModal.classList.remove('hidden');
   }
 
@@ -244,7 +261,16 @@ export function createCampaignController(elements, filterState, callbacks) {
 
     if (elements.btnCancelNewCampaign) {
       elements.btnCancelNewCampaign.addEventListener('click', () => {
+        resetCampaignConfirm();
         elements.newCampaignModal.classList.add('hidden');
+      });
+    }
+
+    if (elements.newCampaignName) {
+      elements.newCampaignName.addEventListener('input', () => {
+        if (campaignConfirmPending) {
+          resetCampaignConfirm();
+        }
       });
     }
 
@@ -252,15 +278,42 @@ export function createCampaignController(elements, filterState, callbacks) {
       elements.newCampaignForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         try {
-          const nameVal = elements.newCampaignName.value;
+          const nameVal = elements.newCampaignName.value ? elements.newCampaignName.value.trim() : '';
+          if (!nameVal) {
+            throw new Error('Ingresa un nombre para la nueva campaña.');
+          }
+          if (!campaignConfirmPending) {
+            campaignConfirmPending = true;
+            const totalLeads = callbacks.getLeadCount ? callbacks.getLeadCount() : 0;
+            if (elements.newCampaignFeedback) {
+              elements.newCampaignFeedback.textContent = 'Se archivarán y reiniciarán ' + totalLeads +
+                ' contactos actuales (se recomienda exportar respaldo JSON antes). Toca "Confirmar e Iniciar" para ejecutar.';
+              elements.newCampaignFeedback.classList.remove('hidden');
+            }
+            if (elements.btnSubmitNewCampaign) {
+              elements.btnSubmitNewCampaign.textContent = 'Confirmar e Iniciar';
+            }
+            return;
+          }
+
           const descVal = elements.newCampaignDesc ? elements.newCampaignDesc.value : '';
           const cloneTpl = elements.newCampaignClone ? elements.newCampaignClone.checked : false;
-          const created = createCampaign(nameVal, descVal, cloneTpl);
-          await archiveAndStartNewCampaign(created.id, created.name);
+          const prevCampaign = getActiveCampaign();
+          const newId = 'camp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+          const archResult = await archiveAndStartNewCampaign(newId, prevCampaign ? prevCampaign.name : 'Campaña previa');
+          createCampaign(nameVal, descVal, cloneTpl, newId);
+
+          if (archResult && Array.isArray(archResult.clearedReminderLeadIds) && callbacks.onCancelNativeReminder) {
+            for (let i = 0; i < archResult.clearedReminderLeadIds.length; i += 1) {
+              await callbacks.onCancelNativeReminder(archResult.clearedReminderLeadIds[i]);
+            }
+          }
+          resetCampaignConfirm();
           elements.newCampaignModal.classList.add('hidden');
           await refreshFilterDropdown();
           await callbacks.onDataChanged();
         } catch (error) {
+          resetCampaignConfirm();
           if (elements.newCampaignFeedback) {
             elements.newCampaignFeedback.textContent = error.message;
             elements.newCampaignFeedback.classList.remove('hidden');

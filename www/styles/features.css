@@ -82,8 +82,6 @@
 }
 .status-choice-btn:active,
 .rubro-choice-btn:active { background-color: var(--bg-surface-hover); }
-.status-vendido { color: var(--status-vendido); }
-.status-descartado { color: var(--status-descartado); }
 
 .lead-card { user-select: none; -webkit-user-select: none; transition: transform 0.14s ease, border-color 0.14s ease, background-color 0.14s ease; }
 .lead-card-pressing { transform: scale(0.985); border-color: var(--accent-primary); }
@@ -146,7 +144,7 @@
 .btn-calendar { background-color: var(--bg-input); color: var(--accent-primary); border: 1px solid var(--accent-primary); }
 
 .bulk-bar {
-  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: var(--z-modal);
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: var(--z-bulk-bar);
   max-width: 700px; margin: 0 auto; background-color: var(--bg-surface);
   border: 1px solid var(--accent-primary); border-radius: var(--radius-lg);
   padding: 10px 12px; box-shadow: var(--shadow-modal);
