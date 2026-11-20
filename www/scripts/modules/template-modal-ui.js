@@ -2,10 +2,10 @@ import { bulkAssignTagByStatuses, renameTagAcrossLeads } from '../services/db-se
 import { RUBRO_CATALOG } from '../services/phase-engine.js';
 
 const PHASE_OPTIONS = [
-  { value: 0, label: 'General (Cualquier fase)' },
-  { value: 1, label: 'Fase 1 · Primer contacto' },
-  { value: 2, label: 'Fase 2 · Seguimiento +3d' },
-  { value: 3, label: 'Fase 3 · Cierre ciclo +4d' }
+  { value: 0, label: 'General (Cualquier momento)' },
+  { value: 1, label: 'Primer contacto (Nuevo)' },
+  { value: 2, label: 'Respuesta (Seguimiento)' },
+  { value: 3, label: 'Demo o cierre' }
 ];
 
 function showModalFeedback(el, text) {
@@ -38,7 +38,7 @@ function attachTwoStepDelete(btn, onConfirmedDelete) {
 
 function buildPhaseSelect(selectedPhase) {
   const select = document.createElement('select');
-  select.setAttribute('aria-label', 'Fase de la plantilla');
+  select.setAttribute('aria-label', 'Momento sugerido');
   const targetVal = Number(selectedPhase);
   PHASE_OPTIONS.forEach((optItem) => {
     const opt = document.createElement('option');
@@ -212,7 +212,7 @@ export async function renderManualTagOptions(lead, listEl, onPickTag) {
   if (templates.length === 0) {
     const hint = document.createElement('p');
     hint.className = 'helper-hint';
-    hint.textContent = 'No hay plantillas en la campaña activa para asignar como fase.';
+    hint.textContent = 'No hay plantillas en la campaña activa para asignar.';
     listEl.appendChild(hint);
     return;
   }
@@ -235,6 +235,7 @@ export async function applyBulkTagSelection(tpl, checksEl, feedbackEl, sentAt, o
   if (!tpl) {
     return;
   }
+  const tplModule = await import('../services/template-service.js');
   const checkedInputs = checksEl.querySelectorAll('input[type="checkbox"]:checked');
   const statuses = [];
   checkedInputs.forEach((input) => {
@@ -246,10 +247,10 @@ export async function applyBulkTagSelection(tpl, checksEl, feedbackEl, sentAt, o
     return;
   }
 
-  const updatedCount = await bulkAssignTagByStatuses(statuses, {
+  const updatedCount = await bulkAssignTagByStatuses(tplModule.getActiveCampaignId(), statuses, {
     id: tpl.id,
     label: tpl.label,
-    phase: Number(tpl.phase) || 0,
+    phase: Number(tpl.phase) > 0 ? Number(tpl.phase) : 0,
     sentAt: sentAt
   });
   await onComplete();

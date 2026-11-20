@@ -15,6 +15,18 @@ const STATUS_LABELS = {
   sin_whatsapp: 'Sin WhatsApp'
 };
 
+const CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram DM',
+  llamada: 'Llamada'
+};
+
+const WA_LINE_LABELS = {
+  wa_1: 'WA 1',
+  wa_2: 'WA 2',
+  wa_3: 'WA 3'
+};
+
 const RUBRO_LABELS = {};
 RUBRO_CATALOG.forEach((item) => {
   RUBRO_LABELS[item.key] = item.label;
@@ -22,19 +34,13 @@ RUBRO_CATALOG.forEach((item) => {
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
-  if (cls) {
-    node.className = cls;
-  }
-  if (text !== undefined && text !== null) {
-    node.textContent = String(text);
-  }
+  if (cls) { node.className = cls; }
+  if (text !== undefined && text !== null) { node.textContent = String(text); }
   return node;
 }
 
 function inSelection(handlers) {
-  if (handlers && typeof handlers.isSelectionActive === 'function') {
-    return Boolean(handlers.isSelectionActive());
-  }
+  if (handlers && typeof handlers.isSelectionActive === 'function') { return Boolean(handlers.isSelectionActive()); }
   return Boolean(handlers && handlers.isSelectionMode);
 }
 
@@ -43,45 +49,37 @@ function isFinalStatus(statusKey) {
 }
 
 function formatShortDate(timestamp) {
-  const dateObj = new Date(Number(timestamp));
-  if (Number.isNaN(dateObj.getTime())) {
-    return '';
-  }
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  return day + '/' + month;
+  const d = new Date(Number(timestamp));
+  if (Number.isNaN(d.getTime())) { return ''; }
+  return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
 function formatNoteTimestamp(timestamp) {
-  const dateObj = new Date(Number(timestamp));
-  if (Number.isNaN(dateObj.getTime())) {
-    return '';
-  }
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const hrs = String(dateObj.getHours()).padStart(2, '0');
-  const mins = String(dateObj.getMinutes()).padStart(2, '0');
-  return day + '/' + month + ' ' + hrs + ':' + mins;
+  const d = new Date(Number(timestamp));
+  if (Number.isNaN(d.getTime())) { return ''; }
+  return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + ' ' +
+    String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
 function getTagColorClass(tagId) {
   const str = String(tagId);
   let sum = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    sum += str.charCodeAt(i);
-  }
+  for (let i = 0; i < str.length; i += 1) { sum += str.charCodeAt(i); }
   return 'tag-tone-' + (sum % 5);
 }
 
 function resolveTagDisplayLabel(tag, handlers) {
-  if (handlers && handlers.tagLabelsMap && handlers.tagLabelsMap[tag.id]) {
-    return handlers.tagLabelsMap[tag.id];
-  }
+  if (handlers && handlers.tagLabelsMap && handlers.tagLabelsMap[tag.id]) { return handlers.tagLabelsMap[tag.id]; }
   return tag.label;
 }
 
 function buildMetaRow(lead, statusKey, phaseInfo, handlers) {
   const metaRow = el('div', 'lead-meta-row');
+
+  if (lead.previousPurchases && lead.previousPurchases.hasBoughtBefore) {
+    const countTxt = lead.previousPurchases.count > 1 ? ' (' + lead.previousPurchases.count + ')' : '';
+    metaRow.appendChild(el('span', 'upsell-badge', '★ Cliente previo' + countTxt));
+  }
 
   if (phaseInfo.badgeText) {
     const phaseCls = phaseInfo.isActionDue ? 'phase-pill phase-due' : 'phase-pill';
@@ -89,7 +87,19 @@ function buildMetaRow(lead, statusKey, phaseInfo, handlers) {
     metaRow.appendChild(el('span', phaseCls, text));
   }
 
-  if (statusKey === 'seguimiento') {
+  if (lead.channelUsed) {
+    let chanText = CHANNEL_LABELS[lead.channelUsed] ? CHANNEL_LABELS[lead.channelUsed] : lead.channelUsed;
+    if (lead.channelUsed === 'whatsapp' && lead.waLineUsed && WA_LINE_LABELS[lead.waLineUsed]) {
+      chanText = WA_LINE_LABELS[lead.waLineUsed];
+    }
+    metaRow.appendChild(el('span', 'channel-used-pill', 'Canal: ' + chanText));
+  }
+
+  if (statusKey === 'descartado' && lead.isMetaBot) {
+    metaRow.appendChild(el('span', 'bot-meta-badge', 'Bot Meta'));
+  }
+
+  if (['contactado', 'seguimiento'].includes(statusKey)) {
     metaRow.appendChild(el('span', 'last-contact-tag', 'Último: ' + formatRelativeTimeAgo(lead.lastContactAt)));
   }
 
@@ -142,7 +152,7 @@ function buildSentTagsRow(lead, handlers) {
     tagsRow.appendChild(chip);
   });
 
-  const addBtn = el('button', 'btn-add-tag', '+ Fase');
+  const addBtn = el('button', 'btn-add-tag', '+ Plantilla');
   addBtn.type = 'button';
   addBtn.addEventListener('click', (ev) => {
     if (inSelection(handlers)) { return; }
@@ -207,8 +217,9 @@ function createQuickNoteItem(lead, item, handlers) {
 
 function buildNotesSection(lead, statusKey, handlers) {
   const wrap = el('div', 'lead-notes-wrap');
-  if (lead.notes) {
-    wrap.appendChild(el('p', 'lead-notes', lead.notes));
+  const baseText = lead.baseNotes ? lead.baseNotes : lead.notes;
+  if (baseText) {
+    wrap.appendChild(el('p', 'lead-notes', baseText));
   }
 
   const qNotes = Array.isArray(lead.quickNotes) ? lead.quickNotes : [];
@@ -241,10 +252,7 @@ function buildNotesSection(lead, statusKey, handlers) {
     input.type = 'text';
     input.placeholder = 'Nota rápida con fecha...';
     input.addEventListener('click', (ev) => {
-      if (inSelection(handlers)) {
-        input.blur();
-        return;
-      }
+      if (inSelection(handlers)) { input.blur(); return; }
       ev.stopPropagation();
     });
     const saveBtn = el('button', 'btn-primary btn-compact', '+ Nota');
@@ -262,10 +270,7 @@ function buildNotesSection(lead, statusKey, handlers) {
       submitNote();
     });
     input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        submitNote();
-      }
+      if (ev.key === 'Enter') { ev.preventDefault(); submitNote(); }
     });
     bar.appendChild(input);
     bar.appendChild(saveBtn);
@@ -275,6 +280,35 @@ function buildNotesSection(lead, statusKey, handlers) {
   return wrap.childNodes.length > 0 ? wrap : null;
 }
 
+function buildTriageBlock(lead, handlers) {
+  const box = el('div', 'triage-box');
+  const toggleLabel = el('label', 'triage-bot-toggle');
+  const botCheck = document.createElement('input');
+  botCheck.type = 'checkbox';
+  botCheck.checked = Boolean(lead.isMetaBot);
+  botCheck.addEventListener('click', (ev) => ev.stopPropagation());
+  toggleLabel.addEventListener('click', (ev) => ev.stopPropagation());
+  toggleLabel.appendChild(botCheck);
+  toggleLabel.appendChild(el('span', '', 'Marcar como Bot automático Meta al descartar'));
+  box.appendChild(toggleLabel);
+
+  const row = el('div', 'triage-actions-row');
+  const btnHuman = createCardActionBtn('btn-triage-human', 'Respondió Humano -> Seguimiento', handlers, () => {
+    if (handlers.onTriageHuman) {
+      handlers.onTriageHuman(lead);
+    }
+  });
+  const btnDiscard = createCardActionBtn('btn-triage-discard', 'Sin respuesta / Bot Meta -> Descartar', handlers, () => {
+    if (handlers.onTriageDiscard) {
+      handlers.onTriageDiscard(lead, botCheck.checked);
+    }
+  });
+  row.appendChild(btnHuman);
+  row.appendChild(btnDiscard);
+  box.appendChild(row);
+  return box;
+}
+
 function attachCardGestures(card, lead, handlers) {
   let pressTimer = null;
   let startX = 0;
@@ -282,17 +316,16 @@ function attachCardGestures(card, lead, handlers) {
   let longPressTriggered = false;
 
   const cancelPress = () => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     card.classList.remove('lead-card-pressing');
   };
 
   card.addEventListener('pointerdown', (ev) => {
     if (inSelection(handlers)) { return; }
     if (ev.button && ev.button !== 0) { return; }
-    if (ev.target.closest('button') || ev.target.closest('input')) { return; }
+    if (ev.target.closest('button') ? true : (ev.target.closest('input') ? true : Boolean(ev.target.closest('label')))) {
+      return;
+    }
     startX = ev.clientX;
     startY = ev.clientY;
     longPressTriggered = false;
@@ -301,35 +334,26 @@ function attachCardGestures(card, lead, handlers) {
       pressTimer = null;
       longPressTriggered = true;
       card.classList.remove('lead-card-pressing');
-      if (handlers.onEnterSelection) {
-        handlers.onEnterSelection(lead);
-      }
+      if (handlers.onEnterSelection) { handlers.onEnterSelection(lead); }
     }, 450);
   });
 
   card.addEventListener('pointermove', (ev) => {
     if (!pressTimer) { return; }
-    if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) {
-      cancelPress();
-    }
+    if (Math.abs(ev.clientX - startX) > 10 ? true : Math.abs(ev.clientY - startY) > 10) { cancelPress(); }
   });
 
   card.addEventListener('pointerup', cancelPress);
   card.addEventListener('pointercancel', cancelPress);
   card.addEventListener('contextmenu', (ev) => {
-    if (pressTimer || longPressTriggered) {
-      ev.preventDefault();
-      longPressTriggered = false;
-    }
+    if (pressTimer ? true : longPressTriggered) { ev.preventDefault(); longPressTriggered = false; }
   });
 
   card.addEventListener('click', (ev) => {
     if (inSelection(handlers)) {
       ev.preventDefault();
       ev.stopPropagation();
-      if (handlers.onToggleSelect) {
-        handlers.onToggleSelect(lead);
-      }
+      if (handlers.onToggleSelect) { handlers.onToggleSelect(lead); }
     }
   });
 }
@@ -342,14 +366,18 @@ function buildHeader(lead, statusKey, handlers) {
   const checkCls = !isSelMode
     ? 'select-check hidden'
     : (handlers.isSelected ? 'select-check checked' : 'select-check');
-  const checkBox = el('span', checkCls, isSelMode && handlers.isSelected ? '✓' : '');
-  leftWrap.appendChild(checkBox);
+  leftWrap.appendChild(el('span', checkCls, isSelMode && handlers.isSelected ? '✓' : ''));
 
   const infoBox = el('div');
   infoBox.appendChild(el('h3', 'lead-title', lead.name));
 
   const subRow = el('div', 'lead-sub-row');
-  subRow.appendChild(el('span', 'lead-phone', '+' + lead.phone));
+  if (lead.phone) {
+    subRow.appendChild(el('span', 'lead-phone', '+' + lead.phone));
+  }
+  if (lead.instagram) {
+    subRow.appendChild(el('span', 'lead-ig-badge', '@' + lead.instagram));
+  }
 
   const hasRubro = Boolean(lead.rubro && RUBRO_LABELS[lead.rubro]);
   const rubroBtn = el('button', hasRubro ? 'rubro-btn rubro-' + lead.rubro : 'rubro-btn rubro-empty', hasRubro ? RUBRO_LABELS[lead.rubro] : '+ Rubro');
@@ -357,9 +385,7 @@ function buildHeader(lead, statusKey, handlers) {
   rubroBtn.addEventListener('click', (ev) => {
     if (inSelection(handlers)) { return; }
     ev.stopPropagation();
-    if (handlers.onPickRubro) {
-      handlers.onPickRubro(lead);
-    }
+    if (handlers.onPickRubro) { handlers.onPickRubro(lead); }
   });
   subRow.appendChild(rubroBtn);
 
@@ -371,9 +397,7 @@ function buildHeader(lead, statusKey, handlers) {
   pillBtn.addEventListener('click', (ev) => {
     if (inSelection(handlers)) { return; }
     ev.stopPropagation();
-    if (handlers.onQuickStatus) {
-      handlers.onQuickStatus(lead);
-    }
+    if (handlers.onQuickStatus) { handlers.onQuickStatus(lead); }
   });
 
   header.appendChild(leftWrap);
@@ -398,7 +422,7 @@ export function createLeadCard(lead, handlers) {
   card.dataset.id = lead.id;
   attachCardGestures(card, lead, handlers);
 
-  const statusKey = lead.status ? lead.status : 'nuevo';
+  const statusKey = lead.stage ? lead.stage : (lead.status ? lead.status : 'nuevo');
   const phaseInfo = evaluateLeadPhase(lead);
 
   card.appendChild(buildHeader(lead, statusKey, handlers));
@@ -409,27 +433,37 @@ export function createLeadCard(lead, handlers) {
   const interestRow = buildInterestRow(lead, statusKey, handlers);
   if (interestRow) { card.appendChild(interestRow); }
 
-  card.appendChild(buildSentTagsRow(lead, handlers));
+  if (Array.isArray(lead.sentTags) && lead.sentTags.length > 0) {
+    card.appendChild(buildSentTagsRow(lead, handlers));
+  }
 
   const notesBlock = buildNotesSection(lead, statusKey, handlers);
   if (notesBlock) { card.appendChild(notesBlock); }
 
-  const actions = el('div', 'lead-actions');
-  if (statusKey === 'sin_whatsapp') {
-    actions.appendChild(createCardActionBtn('btn-warning', 'Llamar', handlers, () => handlers.onCall(lead)));
-    actions.appendChild(createCardActionBtn('btn-secondary', 'Buscar', handlers, () => handlers.onSearch(lead)));
-  } else {
-    actions.appendChild(createCardActionBtn('btn-whatsapp', 'WhatsApp', handlers, () => handlers.onWhatsApp(lead)));
+  if (statusKey === 'contactado') {
+    card.appendChild(buildTriageBlock(lead, handlers));
   }
 
+  const actions = el('div', 'lead-actions');
+  const hasPhone = Boolean(lead.phone);
+  const hasIg = Boolean(lead.instagram);
+  const waLabel = handlers.activeWaLineLabel ? 'WhatsApp · ' + handlers.activeWaLineLabel : 'WhatsApp';
+
+  if (hasPhone && statusKey !== 'sin_whatsapp') {
+    actions.appendChild(createCardActionBtn('btn-whatsapp', waLabel, handlers, () => handlers.onWhatsApp(lead)));
+  }
+  if (hasIg) {
+    actions.appendChild(createCardActionBtn('btn-instagram', 'Instagram DM', handlers, () => handlers.onInstagram(lead)));
+  }
+  if (hasPhone) {
+    actions.appendChild(createCardActionBtn('btn-call', 'Llamar', handlers, () => handlers.onCall(lead)));
+  }
+  if (!(hasPhone ? true : hasIg)) {
+    actions.appendChild(createCardActionBtn('btn-secondary', 'Buscar', handlers, () => handlers.onSearch(lead)));
+  }
   if (!isFinalStatus(statusKey) && handlers.onOpenReminderModal) {
     actions.appendChild(createCardActionBtn('btn-calendar', 'Agendar', handlers, () => handlers.onOpenReminderModal(lead)));
   }
-
-  if (phaseInfo.phaseCode === 'listo_descartar' && handlers.onQuickDiscard) {
-    actions.appendChild(createCardActionBtn('btn-secondary', 'Descartar', handlers, () => handlers.onQuickDiscard(lead)));
-  }
-
   actions.appendChild(createCardActionBtn('btn-secondary', 'Editar', handlers, () => handlers.onEdit(lead)));
   actions.appendChild(createCardActionBtn('btn-danger', 'Borrar', handlers, () => handlers.onDelete(lead)));
   card.appendChild(actions);

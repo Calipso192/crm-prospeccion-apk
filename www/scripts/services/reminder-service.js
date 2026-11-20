@@ -85,13 +85,7 @@ export function parseReminderParts(reminderStr) {
   const year = Number(dateParts[0]);
   const month = Number(dateParts[1]);
   const day = Number(dateParts[2]);
-  if (Number.isNaN(year)) {
-    return null;
-  }
-  if (Number.isNaN(month)) {
-    return null;
-  }
-  if (Number.isNaN(day)) {
+  if ([year, month, day].some(Number.isNaN)) {
     return null;
   }
   let hour = 10;
@@ -134,7 +128,7 @@ export function formatReminderLabel(reminderStr, reason) {
 
 export function formatRelativeTimeAgo(timestampMs) {
   const ts = Number(timestampMs);
-  if (!ts || Number.isNaN(ts)) {
+  if (!(ts > 0) ? true : Number.isNaN(ts)) {
     return 'Sin registro';
   }
   const diffMs = Math.max(0, Date.now() - ts);
@@ -174,8 +168,13 @@ export function buildGoogleCalendarUrl(lead, overrideReminderAt, overrideReason)
     lines.push('Teléfono: +' + lead.phone);
     lines.push('WhatsApp: https://wa.me/' + lead.phone);
   }
-  if (lead.notes) {
-    lines.push('Notas: ' + lead.notes);
+  if (lead.instagram) {
+    lines.push('Instagram: @' + lead.instagram);
+    lines.push('Perfil IG: https://instagram.com/' + lead.instagram);
+  }
+  const noteText = lead.baseNotes ? lead.baseNotes : (lead.notes ? lead.notes : '');
+  if (noteText) {
+    lines.push('Notas: ' + noteText);
   }
   const details = lines.join('\n');
 
@@ -193,16 +192,25 @@ export async function scheduleNativeReminder(lead) {
     return false;
   }
   const plugins = window.Capacitor.Plugins;
-  if (!plugins || !plugins.LocalNotifications) {
+  if (!(plugins && plugins.LocalNotifications)) {
     return false;
   }
   const parsed = parseReminderParts(lead.reminderAt);
-  if (!parsed || parsed.dateObj.getTime() <= Date.now()) {
+  if (!parsed) {
+    return false;
+  }
+  if (parsed.dateObj.getTime() <= Date.now()) {
     return false;
   }
   const notifId = hashLeadIdToInt(lead.id);
   const title = lead.reminderReason ? lead.reminderReason : 'Seguimiento CRM';
-  const body = (lead.name ? lead.name : 'Prospecto') + ' (+' + (lead.phone ? lead.phone : '') + ')';
+  let channelInfo = '';
+  if (lead.phone) {
+    channelInfo = ' (+' + lead.phone + ')';
+  } else if (lead.instagram) {
+    channelInfo = ' (@' + lead.instagram + ')';
+  }
+  const body = (lead.name ? lead.name : 'Prospecto') + channelInfo;
   try {
     await plugins.LocalNotifications.requestPermissions();
     await plugins.LocalNotifications.schedule({
@@ -225,7 +233,7 @@ export async function cancelNativeReminder(leadId) {
     return false;
   }
   const plugins = window.Capacitor.Plugins;
-  if (!plugins || !plugins.LocalNotifications) {
+  if (!(plugins && plugins.LocalNotifications)) {
     return false;
   }
   const notifId = hashLeadIdToInt(leadId);

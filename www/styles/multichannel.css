@@ -1,0 +1,322 @@
+.wa-lines-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-xs);
+}
+
+.wa-line-btn {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  min-height: 58px;
+  color: var(--text-primary);
+}
+
+.wa-line-btn.active {
+  border-color: var(--accent-whatsapp);
+  background-color: rgba(34, 197, 94, 0.14);
+}
+
+.wa-line-btn.line-warn .wa-line-quota {
+  color: var(--accent-warning);
+}
+
+.wa-line-btn.line-full .wa-line-quota {
+  color: var(--accent-danger);
+}
+
+.wa-line-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.wa-line-quota {
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.wa-line-bar {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background-color: var(--bg-surface);
+  overflow: hidden;
+}
+
+.wa-line-fill {
+  height: 100%;
+  border-radius: 999px;
+  background-color: var(--accent-whatsapp);
+}
+
+.wa-line-btn.line-warn .wa-line-fill {
+  background-color: var(--accent-warning);
+}
+
+.wa-line-btn.line-full .wa-line-fill {
+  background-color: var(--accent-danger);
+}
+
+.channel-daily-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-xs);
+}
+
+.channel-daily-pill {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.channel-daily-ig strong { color: #f472b6; }
+.channel-daily-call strong { color: #fbbf24; }
+
+.leads-channel-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px var(--space-md);
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.leads-wa-chips,
+.picker-wa-line-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.picker-wa-line-row {
+  margin-top: var(--space-xs);
+}
+
+.leads-wa-chip,
+.picker-wa-chip {
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  min-height: 32px;
+  padding: 3px 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.leads-wa-chip.active,
+.picker-wa-chip.active {
+  background-color: rgba(34, 197, 94, 0.16);
+  color: var(--accent-whatsapp);
+  border-color: var(--accent-whatsapp);
+}
+
+.leads-strip-counters {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dash-camp-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-campaign-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.dash-campaign-row .dash-campaign-select {
+  flex: 1 1 auto;
+}
+
+.camp-status-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.camp-status-activa {
+  color: var(--accent-whatsapp);
+  background-color: rgba(34, 197, 94, 0.12);
+}
+
+.camp-status-cerrada {
+  color: var(--text-secondary);
+  background-color: var(--bg-input);
+}
+
+.closed-camp-banner {
+  background-color: var(--bg-alert);
+  border: 1px solid var(--accent-warning);
+  color: var(--accent-warning);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.campaign-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--space-xs) 0;
+}
+
+.campaign-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.campaign-mode-option input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.campaign-mode-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.campaign-mode-option strong {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.campaign-mode-option small {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.lead-ig-badge {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #f472b6;
+}
+
+.upsell-badge {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #fbbf24;
+  background-color: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.channel-used-pill {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--status-nuevo);
+  background-color: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.bot-meta-badge {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #c084fc;
+  background-color: rgba(192, 132, 252, 0.15);
+  border: 1px solid rgba(192, 132, 252, 0.5);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.btn-instagram {
+  background: linear-gradient(135deg, #ec4899, #8b5cf6);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.btn-call {
+  background-color: var(--accent-warning);
+  color: #1c1917;
+  font-weight: 700;
+}
+
+.triage-box {
+  background-color: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.triage-actions-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.btn-triage-human {
+  background-color: rgba(168, 85, 247, 0.2);
+  color: #e9d5ff;
+  border: 1px solid var(--status-seguimiento);
+  min-height: 40px;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+}
+
+.btn-triage-discard {
+  background-color: rgba(239, 68, 68, 0.14);
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  min-height: 40px;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+}
+
+.triage-bot-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.triage-bot-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #c084fc;
+}

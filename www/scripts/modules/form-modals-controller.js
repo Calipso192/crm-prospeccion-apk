@@ -2,21 +2,30 @@ import {
   saveLead,
   deleteLead,
   updateLeadReminder,
+  updateLeadCampaignStage,
   applyLeadWhatsAppOutcome
 } from '../services/db-service.js';
 import { formatReminderLabel } from '../services/reminder-service.js';
-import { getActiveCampaignId } from '../services/template-service.js';
+import { getActiveCampaign, getActiveCampaignId } from '../services/template-service.js';
+import { incrementWaLineUsage, getWaLineLabel } from '../services/channel-service.js';
 
 const $ = (id) => document.getElementById(id);
 const PENDING_WA_KEY = 'crm_prospeccion_pending_wa_v2';
 
 export function createFormModalsController(dom, state, scheduler, campaignCtrl, selectionCtrl, callbacks) {
+  let pendingConfirmHandler = null;
+
   function showFeedback(el, text) {
     if (!el) {
       return;
     }
     el.textContent = text;
     el.classList.remove('hidden');
+  }
+
+  function isCampaignClosed() {
+    const camp = getActiveCampaign();
+    return Boolean(camp && camp.status === 'cerrada');
   }
 
   function syncFormFields() {
@@ -28,9 +37,23 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     return formatted ? formatted : 'Sin recordatorio';
   }
 
+  function openConfirmModal(title, message, confirmLabel, onConfirm) {
+    pendingConfirmHandler = typeof onConfirm === 'function' ? onConfirm : null;
+    dom.modalTitle.textContent = title ? title : 'Confirmación';
+    dom.modalMessage.textContent = message ? message : '';
+    const confirmBtn = $('modal-btn-confirm');
+    if (confirmBtn) {
+      confirmBtn.textContent = confirmLabel ? confirmLabel : 'Confirmar';
+    }
+    dom.modal.classList.remove('hidden');
+  }
+
   function openReminderModalForLead(lead) {
     state.reminderTargetLead = lead;
-    dom.reminderLeadLabel.textContent = lead ? lead.name + ' (+' + lead.phone + ')' : 'Nuevo prospecto';
+    let info = '';
+    if (lead && lead.phone) { info = ' (+' + lead.phone + ')'; }
+    else if (lead && lead.instagram) { info = ' (@' + lead.instagram + ')'; }
+    dom.reminderLeadLabel.textContent = lead ? lead.name + info : 'Nuevo prospecto';
     scheduler.loadFromLead(lead ? lead : state.draftReminder);
     dom.reminderModal.classList.remove('hidden');
   }
@@ -41,11 +64,14 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     if (lead) {
       dom.leadId.value = lead.id;
       dom.leadName.value = lead.name;
-      dom.leadPhone.value = lead.phone;
+      dom.leadPhone.value = lead.phone ? lead.phone : '';
+      if (dom.leadInstagram) {
+        dom.leadInstagram.value = lead.instagram ? '@' + lead.instagram : '';
+      }
       dom.leadRubro.value = lead.rubro ? lead.rubro : '';
-      dom.leadStatus.value = lead.status;
+      dom.leadStatus.value = lead.stage ? lead.stage : (lead.status ? lead.status : 'nuevo');
       dom.leadAmount.value = lead.saleAmount > 0 ? String(lead.saleAmount) : '';
-      dom.leadNotes.value = lead.notes ? lead.notes : '';
+      dom.leadNotes.value = lead.baseNotes ? lead.baseNotes : (lead.notes ? lead.notes : '');
       state.draftReminder = { reminderAt: lead.reminderAt, reminderReason: lead.reminderReason };
     } else {
       dom.leadForm.reset();
@@ -70,17 +96,26 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
   }
 
   function openDeleteModal(lead) {
-    state.pendingDeleteId = lead.id;
-    dom.modalTitle.textContent = 'Eliminar Prospecto';
-    dom.modalMessage.textContent = '¿Seguro que deseas eliminar a ' + lead.name + '? Esta acción no se puede deshacer.';
-    dom.modal.classList.remove('hidden');
+    openConfirmModal(
+      'Eliminar Prospecto',
+      '¿Seguro que deseas eliminar a ' + lead.name + '? Se borrará su ficha maestra de todas las campañas.',
+      'Eliminar',
+      async () => {
+        await deleteLead(lead.id);
+        await callbacks.onCancelNativeReminder(lead.id);
+        await callbacks.onRefreshLeads();
+      }
+    );
   }
 
   function openQuickStatusModal(lead) {
     selectionCtrl.clearBulkStatusFlag();
     state.quickStatusLead = lead;
     dom.quickStatusTitle.textContent = 'Mover prospecto';
-    dom.quickStatusLeadName.textContent = lead.name + ' (+' + lead.phone + ')';
+    let contactPart = '';
+    if (lead.phone) { contactPart = ' (+' + lead.phone + ')'; }
+    else if (lead.instagram) { contactPart = ' (@' + lead.instagram + ')'; }
+    dom.quickStatusLeadName.textContent = lead.name + contactPart;
     dom.quickSaleBox.classList.add('hidden');
     dom.quickSaleAmount.value = lead.saleAmount > 0 ? String(lead.saleAmount) : '';
     dom.quickStatusModal.classList.remove('hidden');
@@ -106,26 +141,41 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     if (!lead) {
       return;
     }
-    await saveLead(Object.assign({}, lead, {
-      status: targetStatus,
+    const campId = lead.campaignId ? lead.campaignId : getActiveCampaignId();
+    await updateLeadCampaignStage(lead.id, campId, targetStatus, {
       saleAmount: targetStatus === 'vendido' ? amountValue : 0
-    }));
+    });
     await callbacks.onRefreshLeads();
   }
 
-  async function applyWhatsAppOutcome(newStatus) {
+  async function applyWhatsAppOutcome(action) {
     const pending = state.pendingWhatsAppLead;
     state.pendingWhatsAppLead = null;
     try {
       sessionStorage.removeItem(PENDING_WA_KEY);
-    } catch (error) {}
-    dom.statusModal.classList.add('hidden');
-    const targetId = pending ? (pending.leadId || pending.id) : '';
-    if (targetId && newStatus) {
-      const tpl = newStatus === 'contactado' && pending.tpl ? pending.tpl : null;
-      await applyLeadWhatsAppOutcome(targetId, newStatus, tpl);
-      await callbacks.onRefreshLeads();
+    } catch (error) {
+      /* Sin sessionStorage disponible */
     }
+    dom.statusModal.classList.add('hidden');
+    if (!pending) {
+      return;
+    }
+    const targetId = pending.leadId ? pending.leadId : pending.id;
+    if (!(targetId && action)) {
+      return;
+    }
+    const campId = pending.campaignId ? pending.campaignId : getActiveCampaignId();
+    const isSentAction = action === 'contactado' ? true : action === 'keep_sent';
+    const tpl = isSentAction && pending.tpl ? pending.tpl : null;
+    const lineId = isSentAction ? pending.waLineUsed : '';
+    await applyLeadWhatsAppOutcome(targetId, campId, action, tpl, lineId);
+    if (isSentAction) {
+      const nextCount = incrementWaLineUsage(lineId);
+      if (callbacks.onShowToast) {
+        callbacks.onShowToast('WhatsApp enviado (' + getWaLineLabel(lineId) + ' · ' + nextCount + '/300)', false);
+      }
+    }
+    await callbacks.onRefreshLeads();
   }
 
   function getTemplateEditorHooks() {
@@ -182,6 +232,10 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     }
   }
 
+  function getExportList() {
+    return Array.isArray(state.masterLeads) ? state.masterLeads : state.leads;
+  }
+
   function bindBackupAndTemplates() {
     $('btn-backup').addEventListener('click', () => {
       dom.backupFeedback.classList.add('hidden');
@@ -190,17 +244,17 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     $('btn-close-backup').addEventListener('click', () => dom.backupModal.classList.add('hidden'));
     $('btn-export-backup').addEventListener('click', async () => {
       const tools = await import('./modal-tools.js');
-      await tools.exportBackupJson(state.leads, dom.backupFeedback);
+      await tools.exportBackupJson(getExportList(), dom.backupFeedback);
       await callbacks.onRenderActiveView();
     });
     $('btn-share-backup').addEventListener('click', async () => {
       const tools = await import('./modal-tools.js');
-      await tools.shareBackupJson(state.leads, dom.backupFeedback);
+      await tools.shareBackupJson(getExportList(), dom.backupFeedback);
       await callbacks.onRenderActiveView();
     });
     $('btn-copy-backup').addEventListener('click', async () => {
       const tools = await import('./modal-tools.js');
-      await tools.copyBackupJson(state.leads, dom.backupFeedback);
+      await tools.copyBackupJson(getExportList(), dom.backupFeedback);
       await callbacks.onRenderActiveView();
     });
     $('input-import-backup').addEventListener('change', async (ev) => {
@@ -213,6 +267,10 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       ev.target.value = '';
     });
     $('btn-import-bulk').addEventListener('click', async () => {
+      if (isCampaignClosed()) {
+        showFeedback(dom.backupFeedback, 'La campaña activa está cerrada. Reábrela o cambia a una campaña activa para importar contactos.');
+        return;
+      }
       const tools = await import('./modal-tools.js');
       await tools.importBulkLeads(dom.bulkLeadsText, dom.bulkDefaultRubro, dom.backupFeedback, callbacks.onRefreshLeads);
     });
@@ -249,12 +307,20 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       const target = state.reminderTargetLead;
       dom.reminderModal.classList.add('hidden');
       if (target) {
-        const updated = await updateLeadReminder(target.id, vals.reminderAt, vals.reminderReason);
-        if (updated) {
+        const campId = target.campaignId ? target.campaignId : getActiveCampaignId();
+        const updatedMaster = await updateLeadReminder(target.id, campId, vals.reminderAt, vals.reminderReason);
+        if (updatedMaster) {
           if (vals.reminderAt) {
-            await callbacks.onScheduleNativeReminder(updated);
+            await callbacks.onScheduleNativeReminder({
+              id: updatedMaster.id,
+              name: updatedMaster.name,
+              phone: updatedMaster.phone,
+              instagram: updatedMaster.instagram,
+              reminderAt: vals.reminderAt,
+              reminderReason: vals.reminderReason
+            });
           } else {
-            await callbacks.onCancelNativeReminder(updated.id);
+            await callbacks.onCancelNativeReminder(updatedMaster.id);
           }
         }
         state.reminderTargetLead = null;
@@ -266,24 +332,37 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
     });
     dom.leadForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (isCampaignClosed()) {
+        showFeedback(dom.formFeedback, 'Esta campaña está cerrada. Reábrela desde el Dashboard para guardar cambios.');
+        return;
+      }
       const existingId = dom.leadId.value;
       const existingLead = existingId ? state.leads.find((item) => item.id === existingId) : null;
       const hadReminder = Boolean(existingLead && existingLead.reminderAt);
+      const activeCid = getActiveCampaignId();
       try {
-        const saved = await saveLead(Object.assign({}, existingLead ? existingLead : {}, {
+        const saved = await saveLead({
           id: existingId ? existingId : null,
           name: dom.leadName.value,
           phone: dom.leadPhone.value,
+          instagram: dom.leadInstagram ? dom.leadInstagram.value : '',
           rubro: dom.leadRubro.value,
-          status: dom.leadStatus.value,
+          stage: dom.leadStatus.value,
           saleAmount: dom.leadAmount.value,
           reminderAt: state.draftReminder.reminderAt,
           reminderReason: state.draftReminder.reminderReason,
-          notes: dom.leadNotes.value,
-          campaignId: existingLead && existingLead.campaignId ? existingLead.campaignId : getActiveCampaignId()
-        }));
-        if (saved && saved.reminderAt) {
-          await callbacks.onScheduleNativeReminder(saved);
+          baseNotes: dom.leadNotes.value,
+          campaignId: existingLead && existingLead.campaignId ? existingLead.campaignId : activeCid
+        });
+        if (saved && state.draftReminder.reminderAt) {
+          await callbacks.onScheduleNativeReminder({
+            id: saved.id,
+            name: saved.name,
+            phone: saved.phone,
+            instagram: saved.instagram,
+            reminderAt: state.draftReminder.reminderAt,
+            reminderReason: state.draftReminder.reminderReason
+          });
         } else if (saved && hadReminder) {
           await callbacks.onCancelNativeReminder(saved.id);
         }
@@ -320,26 +399,29 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       dom.quickStatusModal.classList.add('hidden');
     });
     $('modal-btn-cancel').addEventListener('click', () => {
-      state.pendingDeleteId = null;
+      pendingConfirmHandler = null;
       dom.modal.classList.add('hidden');
     });
     $('modal-btn-confirm').addEventListener('click', async () => {
-      if (state.pendingDeleteId) {
-        const idToDel = state.pendingDeleteId;
-        state.pendingDeleteId = null;
-        dom.modal.classList.add('hidden');
-        await deleteLead(idToDel);
-        await callbacks.onCancelNativeReminder(idToDel);
-        await callbacks.onRefreshLeads();
+      const handler = pendingConfirmHandler;
+      pendingConfirmHandler = null;
+      dom.modal.classList.add('hidden');
+      if (handler) {
+        await handler();
       }
     });
-    $('btn-status-contacted').addEventListener('click', () => applyWhatsAppOutcome('contactado'));
+    $('btn-status-contacted').addEventListener('click', () => {
+      const curStage = state.pendingWhatsAppLead ? state.pendingWhatsAppLead.currentStage : 'nuevo';
+      const action = ['nuevo', 'sin_whatsapp'].includes(curStage) ? 'contactado' : 'keep_sent';
+      applyWhatsAppOutcome(action);
+    });
     $('btn-status-no-wa').addEventListener('click', () => applyWhatsAppOutcome('sin_whatsapp'));
     $('btn-status-keep').addEventListener('click', () => applyWhatsAppOutcome(null));
   }
 
   return {
     bind,
+    openConfirmModal,
     openReminderModalForLead,
     openForm,
     openDeleteModal,

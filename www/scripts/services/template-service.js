@@ -17,6 +17,8 @@ const DEFAULT_CAMPAIGNS = [
     id: DEFAULT_CAMPAIGN_ID,
     name: 'Campaña Principal (FidelizaCard)',
     description: 'Prospección base de negocios locales',
+    status: 'activa',
+    closedAt: 0,
     createdAt: 1700000000000
   }
 ];
@@ -27,7 +29,7 @@ const DEFAULT_TEMPLATES = [
     campaignId: DEFAULT_CAMPAIGN_ID,
     phase: 1,
     rubro: '',
-    label: 'Fase 1 · Primer contacto',
+    label: 'Primer contacto',
     text: 'Hola {nombre}, un gusto saludarte. Te escribo para presentarte una propuesta que puede ayudarte a fidelizar más clientes en tu negocio.'
   },
   {
@@ -35,21 +37,36 @@ const DEFAULT_TEMPLATES = [
     campaignId: DEFAULT_CAMPAIGN_ID,
     phase: 2,
     rubro: '',
-    label: 'Fase 2 · Seguimiento 3 días',
-    text: 'Hola {nombre}, retomando mi mensaje anterior, ¿pudiste revisar la propuesta? Te puedo mostrar cómo funciona en menos de 2 minutos.'
+    label: 'Seguimiento respuesta',
+    text: 'Hola {nombre}, gracias por responder. ¿Te gustaría que te muestre cómo funciona una demo rápida adaptada a tu {rubro}?'
   },
   {
     id: 'tpl_3',
     campaignId: DEFAULT_CAMPAIGN_ID,
     phase: 3,
     rubro: '',
-    label: 'Fase 3 · Cierre de ciclo',
-    text: 'Hola {nombre}, te dejo por aquí el enlace con la demostración rápida por si más adelante deseas implementarlo en tu local. ¡Éxitos!'
+    label: 'Envío de demo',
+    text: 'Hola {nombre}, te comparto por aquí los detalles y la demostración para implementarlo en tu local. Quedo atento a tus dudas.'
   }
 ];
 
 function shortRand() {
   return Math.random().toString(36).slice(2, 6);
+}
+
+function normalizeCampaignItem(item) {
+  const src = item && typeof item === 'object' ? item : {};
+  const rawStatus = src.status ? String(src.status).trim().toLowerCase() : 'activa';
+  const cleanStatus = rawStatus === 'cerrada' ? 'cerrada' : 'activa';
+  const closedAt = cleanStatus === 'cerrada' && Number(src.closedAt) > 0 ? Number(src.closedAt) : 0;
+  return {
+    id: src.id ? String(src.id) : DEFAULT_CAMPAIGN_ID,
+    name: src.name ? String(src.name).trim() : 'Campaña',
+    description: src.description ? String(src.description).trim() : '',
+    status: cleanStatus,
+    closedAt: closedAt,
+    createdAt: Number(src.createdAt) > 0 ? Number(src.createdAt) : Date.now()
+  };
 }
 
 function normalizeTemplateItem(item) {
@@ -78,16 +95,22 @@ export function getCampaigns() {
     const raw = localStorage.getItem(CAMPAIGNS_KEY);
     if (!raw) {
       localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(DEFAULT_CAMPAIGNS));
-      return DEFAULT_CAMPAIGNS.slice();
+      return DEFAULT_CAMPAIGNS.map(normalizeCampaignItem);
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
+      return parsed.map(normalizeCampaignItem);
     }
-    return DEFAULT_CAMPAIGNS.slice();
+    return DEFAULT_CAMPAIGNS.map(normalizeCampaignItem);
   } catch (error) {
-    return DEFAULT_CAMPAIGNS.slice();
+    return DEFAULT_CAMPAIGNS.map(normalizeCampaignItem);
   }
+}
+
+export function getCampaignById(campaignId) {
+  const campaigns = getCampaigns();
+  const found = campaigns.find((c) => c.id === campaignId);
+  return found ? found : null;
 }
 
 export function getActiveCampaignId() {
@@ -118,6 +141,27 @@ export function setActiveCampaign(campaignId) {
   return getActiveCampaign();
 }
 
+export function setCampaignStatus(campaignId, nextStatus) {
+  const cleanStatus = nextStatus === 'cerrada' ? 'cerrada' : 'activa';
+  const campaigns = getCampaigns();
+  let updatedItem = null;
+  const nextList = campaigns.map((camp) => {
+    if (camp.id !== campaignId) {
+      return camp;
+    }
+    updatedItem = normalizeCampaignItem(Object.assign({}, camp, {
+      status: cleanStatus,
+      closedAt: cleanStatus === 'cerrada' ? Date.now() : 0
+    }));
+    return updatedItem;
+  });
+  if (!updatedItem) {
+    return null;
+  }
+  localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(nextList));
+  return updatedItem;
+}
+
 export function createCampaign(name, description, cloneTemplatesFromActive, forcedId) {
   const cleanName = name ? String(name).trim() : '';
   if (!cleanName) {
@@ -126,12 +170,14 @@ export function createCampaign(name, description, cloneTemplatesFromActive, forc
   const campaigns = getCampaigns();
   const now = Date.now();
   const newId = forcedId ? String(forcedId) : 'camp_' + now + '_' + shortRand();
-  const newCampaign = {
+  const newCampaign = normalizeCampaignItem({
     id: newId,
     name: cleanName,
     description: description ? String(description).trim() : '',
+    status: 'activa',
+    closedAt: 0,
     createdAt: now
-  };
+  });
   campaigns.push(newCampaign);
   localStorage.setItem(CAMPAIGNS_KEY, JSON.stringify(campaigns));
 
@@ -168,7 +214,7 @@ export function mergeCampaigns(incomingCampaigns, preferredActiveId) {
   let added = 0;
 
   incoming.forEach((camp) => {
-    if (!camp || !camp.id) {
+    if (!(camp && camp.id)) {
       return;
     }
     const id = String(camp.id);
@@ -176,12 +222,14 @@ export function mergeCampaigns(incomingCampaigns, preferredActiveId) {
       return;
     }
     existingIds.add(id);
-    merged.push({
+    merged.push(normalizeCampaignItem({
       id: id,
       name: camp.name ? String(camp.name).trim() : 'Campaña importada',
       description: camp.description ? String(camp.description).trim() : '',
+      status: camp.status ? camp.status : 'activa',
+      closedAt: camp.closedAt,
       createdAt: Number(camp.createdAt) > 0 ? Number(camp.createdAt) : Date.now()
-    });
+    }));
     added += 1;
   });
 
@@ -265,7 +313,7 @@ export function mergeTemplates(incomingTemplates) {
   let updated = 0;
 
   incoming.forEach((raw) => {
-    if (!raw || !raw.id) {
+    if (!(raw && raw.id)) {
       return;
     }
     const inc = normalizeTemplateItem(raw);
@@ -284,7 +332,7 @@ export function mergeTemplates(incomingTemplates) {
     }
   });
 
-  if (added > 0 || updated > 0) {
+  if (added + updated > 0) {
     saveTemplates(merged);
   }
   return { added: added, updated: updated };

@@ -1,4 +1,5 @@
 import { matchesQueueFilter, sortSeguimientoLeads, getInterestTagsCatalog } from '../services/phase-engine.js';
+import { getActiveWaLine, getWaLineLabel } from '../services/channel-service.js';
 import { matchesRubroAndCampaign } from './campaign-controller.js';
 
 const BATCH_SIZE = 30;
@@ -12,8 +13,12 @@ function matchesSearchQuery(lead, rawQuery) {
   if (nameMatch) {
     return true;
   }
+  const cleanIgQuery = query.replace(/^@+/, '');
+  if (cleanIgQuery && lead.instagram && lead.instagram.indexOf(cleanIgQuery) !== -1) {
+    return true;
+  }
   const digitsQuery = query.replace(/\D/g, '');
-  if (digitsQuery.length > 0) {
+  if (digitsQuery.length > 0 && lead.phone) {
     return String(lead.phone).indexOf(digitsQuery) !== -1;
   }
   return false;
@@ -61,6 +66,7 @@ export function createListRenderer(elements, state, getBaseHandlers) {
       tagLabelsMap[tpl.id] = tpl.label;
     });
     const interestCatalog = getInterestTagsCatalog();
+    const activeWaLineLabel = getWaLineLabel(getActiveWaLine());
 
     const baseHandlers = getBaseHandlers(mods.waMod, tagLabelsMap);
     const endIdx = Math.min(renderedCount + BATCH_SIZE, currentFiltered.length);
@@ -71,6 +77,7 @@ export function createListRenderer(elements, state, getBaseHandlers) {
       const lead = currentFiltered[i];
       const handlers = Object.assign({}, baseHandlers, {
         interestCatalog: interestCatalog,
+        activeWaLineLabel: activeWaLineLabel,
         isSelectionActive: () => state.selectionMode,
         isSelectionMode: state.selectionMode,
         isSelected: selectedSet.has(lead.id)
@@ -113,7 +120,8 @@ export function createListRenderer(elements, state, getBaseHandlers) {
   function filterAndSortLeads(allLeads) {
     const now = Date.now();
     const filtered = allLeads.filter((lead) => {
-      const statusOk = state.filter === 'todos' ? true : lead.status === state.filter;
+      const st = lead.stage ? lead.stage : lead.status;
+      const statusOk = state.filter === 'todos' ? true : st === state.filter;
       if (!statusOk) {
         return false;
       }
@@ -145,7 +153,7 @@ export function createListRenderer(elements, state, getBaseHandlers) {
       const hasQuery = Boolean(state.searchQuery && state.searchQuery.trim().length > 0);
       empty.textContent = hasQuery
         ? 'No se encontraron prospectos para "' + state.searchQuery.trim() + '".'
-        : 'No hay prospectos que coincidan con los filtros seleccionados.';
+        : 'No hay prospectos en esta vista con los filtros actuales.';
       elements.leadsList.appendChild(empty);
       return;
     }

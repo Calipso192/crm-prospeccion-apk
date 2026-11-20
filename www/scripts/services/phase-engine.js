@@ -1,10 +1,6 @@
 import { parseReminderParts } from './reminder-service.js';
 
 const DAY_MS = 86400000;
-const HOUR_MS = 3600000;
-const PHASE_2_MS = 3 * DAY_MS;
-const PHASE_3_MS = 4 * DAY_MS;
-const DISCARD_MS = 24 * HOUR_MS;
 const INTEREST_CATALOG_KEY = 'crm_prospeccion_interest_tags_v2';
 
 export const DEFAULT_INTEREST_TAGS = [
@@ -101,6 +97,29 @@ export function deleteInterestTagDefinition(id) {
   saveInterestTagsCatalog(catalog);
 }
 
+function ingestInterestList(tagList, indexById, merged) {
+  if (!Array.isArray(tagList)) {
+    return 0;
+  }
+  let added = 0;
+  tagList.forEach((tag) => {
+    if (!(tag && tag.id)) {
+      return;
+    }
+    const id = String(tag.id);
+    if (!indexById.has(id)) {
+      indexById.set(id, merged.length);
+      merged.push({
+        id: id,
+        label: tag.label ? String(tag.label).trim() : id,
+        tone: 'hot'
+      });
+      added += 1;
+    }
+  });
+  return added;
+}
+
 export function mergeInterestTagsCatalog(incomingCatalog, incomingLeads) {
   const current = getInterestTagsCatalog();
   const defaultById = new Map(DEFAULT_INTEREST_TAGS.map((t) => [t.id, t]));
@@ -111,7 +130,7 @@ export function mergeInterestTagsCatalog(incomingCatalog, incomingLeads) {
 
   if (Array.isArray(incomingCatalog)) {
     incomingCatalog.forEach((raw) => {
-      if (!raw || !raw.id) {
+      if (!(raw && raw.id)) {
         return;
       }
       const inc = {
@@ -129,7 +148,7 @@ export function mergeInterestTagsCatalog(incomingCatalog, incomingLeads) {
       const localItem = merged[idx];
       const defItem = defaultById.get(inc.id);
       if (defItem && localItem.label === defItem.label && localItem.tone === defItem.tone) {
-        if (inc.label !== defItem.label || inc.tone !== defItem.tone) {
+        if (inc.label !== defItem.label ? true : inc.tone !== defItem.tone) {
           merged[idx] = inc;
           updated += 1;
         }
@@ -139,28 +158,22 @@ export function mergeInterestTagsCatalog(incomingCatalog, incomingLeads) {
 
   if (Array.isArray(incomingLeads)) {
     incomingLeads.forEach((lead) => {
-      if (!lead || !Array.isArray(lead.interestTags)) {
+      if (!(lead && typeof lead === 'object')) {
         return;
       }
-      lead.interestTags.forEach((tag) => {
-        if (!tag || !tag.id) {
-          return;
-        }
-        const id = String(tag.id);
-        if (!indexById.has(id)) {
-          indexById.set(id, merged.length);
-          merged.push({
-            id: id,
-            label: tag.label ? String(tag.label).trim() : id,
-            tone: 'hot'
-          });
-          added += 1;
-        }
-      });
+      added += ingestInterestList(lead.interestTags, indexById, merged);
+      if (lead.campaignStates && typeof lead.campaignStates === 'object') {
+        Object.keys(lead.campaignStates).forEach((cid) => {
+          const st = lead.campaignStates[cid];
+          if (st) {
+            added += ingestInterestList(st.interestTags, indexById, merged);
+          }
+        });
+      }
     });
   }
 
-  if (added > 0 || updated > 0) {
+  if (added + updated > 0) {
     saveInterestTagsCatalog(merged);
   }
   return { added: added, updated: updated };
@@ -171,92 +184,46 @@ export function computeRetroactiveTimestamp(daysAgo) {
   return Date.now() - (cleanDays * DAY_MS);
 }
 
-function getLatestSentTag(sentTags) {
-  if (!Array.isArray(sentTags) || sentTags.length === 0) {
-    return null;
-  }
-  let latest = sentTags[0];
-  for (let i = 1; i < sentTags.length; i += 1) {
-    if (Number(sentTags[i].sentAt) > Number(latest.sentAt)) {
-      latest = sentTags[i];
-    }
-  }
-  return latest;
-}
-
-function resolveTagPhase(tag) {
-  const explicit = Number(tag.phase);
-  if (explicit === 1 || explicit === 2 || explicit === 3) {
-    return explicit;
-  }
-  if (tag.phase === undefined) {
-    if (tag.id === 'tpl_1') { return 1; }
-    if (tag.id === 'tpl_2') { return 2; }
-    if (tag.id === 'tpl_3') { return 3; }
-  }
-  return 0;
-}
-
-function resolveCompletedPhaseAndTime(tags) {
-  let maxPhase = 0;
-  tags.forEach((t) => {
-    const p = resolveTagPhase(t);
-    if (p > maxPhase) {
-      maxPhase = p;
-    }
-  });
-  if (maxPhase > 0) {
-    const phaseTags = tags.filter((t) => resolveTagPhase(t) === maxPhase);
-    const refTag = getLatestSentTag(phaseTags) || getLatestSentTag(tags);
-    return { completedPhase: maxPhase, referenceSentAt: Number(refTag.sentAt) };
-  }
-  const latest = getLatestSentTag(tags);
-  return {
-    completedPhase: Math.min(3, tags.length),
-    referenceSentAt: Number(latest.sentAt)
-  };
-}
-
-export function evaluateLeadPhase(lead, nowMs) {
-  const now = nowMs ? nowMs : Date.now();
-  const status = lead.status ? lead.status : 'nuevo';
-  const tags = Array.isArray(lead.sentTags) ? lead.sentTags : [];
-  const tagCount = tags.length;
-
+export function evaluateLeadPhase(lead) {
+  const status = lead && lead.stage ? lead.stage : (lead && lead.status ? lead.status : 'nuevo');
   if (status === 'nuevo') {
-    return { phaseCode: 'nuevo_pendiente', phaseNumber: 0, suggestedPhase: 1, isActionDue: true, badgeText: 'Listo Fase 1', detailText: 'Pendiente 1er mensaje' };
+    return {
+      phaseCode: 'nuevo_pendiente',
+      phaseNumber: 0,
+      suggestedPhase: 1,
+      isActionDue: true,
+      badgeText: 'Por contactar',
+      detailText: '1er toque pendiente'
+    };
   }
-  if (status !== 'contactado') {
-    return { phaseCode: 'none', phaseNumber: tagCount, suggestedPhase: 0, isActionDue: false, badgeText: '', detailText: '' };
+  if (status === 'contactado') {
+    return {
+      phaseCode: 'contactado_triage',
+      phaseNumber: 1,
+      suggestedPhase: 2,
+      isActionDue: true,
+      badgeText: 'En triage',
+      detailText: 'Clasificar respuesta'
+    };
   }
-  if (tagCount === 0) {
-    return { phaseCode: 'fase_1_pendiente', phaseNumber: 0, suggestedPhase: 1, isActionDue: true, badgeText: 'Sin toque · Fase 1', detailText: 'Enviar 1er mensaje' };
+  if (status === 'sin_whatsapp') {
+    return {
+      phaseCode: 'sin_whatsapp',
+      phaseNumber: 0,
+      suggestedPhase: 1,
+      isActionDue: false,
+      badgeText: 'Sin WhatsApp',
+      detailText: 'Usar IG o Llamada'
+    };
   }
-
-  const resolved = resolveCompletedPhaseAndTime(tags);
-  const elapsedMs = Math.max(0, now - resolved.referenceSentAt);
-  const daysElapsed = Math.floor(elapsedMs / DAY_MS);
-  const hoursElapsed = Math.floor(elapsedMs / HOUR_MS);
-
-  if (resolved.completedPhase === 1) {
-    if (elapsedMs >= PHASE_2_MS) {
-      return { phaseCode: 'listo_fase_2', phaseNumber: 1, suggestedPhase: 2, isActionDue: true, badgeText: 'Listo Fase 2', detailText: 'Hace ' + daysElapsed + 'd desde Fase 1' };
-    }
-    const remDays = Math.max(1, Math.ceil((PHASE_2_MS - elapsedMs) / DAY_MS));
-    return { phaseCode: 'espera_fase_1', phaseNumber: 1, suggestedPhase: 2, isActionDue: false, badgeText: 'Fase 1 · ' + daysElapsed + 'd', detailText: 'Fase 2 en ' + remDays + 'd' };
-  }
-  if (resolved.completedPhase === 2) {
-    if (elapsedMs >= PHASE_3_MS) {
-      return { phaseCode: 'listo_fase_3', phaseNumber: 2, suggestedPhase: 3, isActionDue: true, badgeText: 'Listo Fase 3', detailText: 'Hace ' + daysElapsed + 'd desde Fase 2' };
-    }
-    const remDays = Math.max(1, Math.ceil((PHASE_3_MS - elapsedMs) / DAY_MS));
-    return { phaseCode: 'espera_fase_2', phaseNumber: 2, suggestedPhase: 3, isActionDue: false, badgeText: 'Fase 2 · ' + daysElapsed + 'd', detailText: 'Fase 3 en ' + remDays + 'd' };
-  }
-  if (elapsedMs >= DISCARD_MS) {
-    return { phaseCode: 'listo_descartar', phaseNumber: 3, suggestedPhase: 0, isActionDue: true, badgeText: 'Listo Descartar', detailText: '+' + hoursElapsed + 'h tras Fase 3' };
-  }
-  const remHours = Math.max(1, Math.ceil((DISCARD_MS - elapsedMs) / HOUR_MS));
-  return { phaseCode: 'espera_fase_3', phaseNumber: 3, suggestedPhase: 0, isActionDue: false, badgeText: 'Fase 3 · ' + hoursElapsed + 'h', detailText: 'Descarte en ' + remHours + 'h' };
+  return {
+    phaseCode: 'none',
+    phaseNumber: 0,
+    suggestedPhase: 0,
+    isActionDue: false,
+    badgeText: '',
+    detailText: ''
+  };
 }
 
 function getLocalDayKey(dateObj) {
@@ -293,16 +260,38 @@ export function sortSeguimientoLeads(leads, nowMs) {
   });
 }
 
-export function buildDashboardSnapshot(leads, nowMs) {
+export function buildDashboardSnapshot(campaignLeads, nowMs) {
+  const leads = Array.isArray(campaignLeads) ? campaignLeads : [];
   const now = nowMs ? nowMs : Date.now();
   const interestCatalog = getInterestTagsCatalog();
-  const queue = { seguimientoUrgent: 0, seguimientoOverdue: 0, seguimientoToday: 0, nuevosSinFase1: 0, listosFase2: 0, listosFase3: 0, listosDescartar: 0 };
-  const funnel = { total: leads.length, nuevo: 0, contactadoF1: 0, contactadoF2: 0, contactadoF3: 0, contactadoTotal: 0, seguimiento: 0, vendido: 0, descartado: 0, sinWhatsapp: 0 };
+  const queue = {
+    seguimientoUrgent: 0,
+    seguimientoOverdue: 0,
+    seguimientoToday: 0,
+    nuevosPendientes: 0,
+    contactadosTriage: 0,
+    sinWhatsappAlt: 0
+  };
+  const funnel = {
+    total: leads.length,
+    nuevo: 0,
+    contactado: 0,
+    contactadoWa: 0,
+    contactadoIg: 0,
+    contactadoCall: 0,
+    seguimiento: 0,
+    vendido: 0,
+    descartado: 0,
+    descartadoBotMeta: 0,
+    sinWhatsapp: 0
+  };
   const interestCounts = {};
   interestCatalog.forEach((t) => { interestCounts[t.id] = 0; });
 
   const rubroMap = {};
-  RUBRO_CATALOG.forEach((r) => { rubroMap[r.key] = { key: r.key, label: r.label, total: 0, responded: 0, sold: 0, revenue: 0 }; });
+  RUBRO_CATALOG.forEach((r) => {
+    rubroMap[r.key] = { key: r.key, label: r.label, total: 0, responded: 0, sold: 0, revenue: 0 };
+  });
   rubroMap.otros = { key: '', label: 'Sin rubro', total: 0, responded: 0, sold: 0, revenue: 0 };
 
   let totalRevenue = 0;
@@ -310,7 +299,7 @@ export function buildDashboardSnapshot(leads, nowMs) {
   let respondedCount = 0;
 
   leads.forEach((lead) => {
-    const st = lead.status ? lead.status : 'nuevo';
+    const st = lead.stage ? lead.stage : (lead.status ? lead.status : 'nuevo');
     const rKey = lead.rubro && rubroMap[lead.rubro] ? lead.rubro : 'otros';
     rubroMap[rKey].total += 1;
 
@@ -320,18 +309,28 @@ export function buildDashboardSnapshot(leads, nowMs) {
       });
     }
 
-    if (st === 'nuevo') { funnel.nuevo += 1; queue.nuevosSinFase1 += 1; return; }
-    if (st === 'sin_whatsapp') { funnel.sinWhatsapp += 1; return; }
+    if (st === 'nuevo') {
+      funnel.nuevo += 1;
+      queue.nuevosPendientes += 1;
+      return;
+    }
+    if (st === 'sin_whatsapp') {
+      funnel.sinWhatsapp += 1;
+      queue.sinWhatsappAlt += 1;
+      return;
+    }
     contactedOrProgressed += 1;
 
     if (st === 'contactado') {
-      funnel.contactadoTotal += 1;
-      const phase = evaluateLeadPhase(lead, now);
-      if (phase.phaseNumber <= 1) { funnel.contactadoF1 += 1; } else if (phase.phaseNumber === 2) { funnel.contactadoF2 += 1; } else { funnel.contactadoF3 += 1; }
-      if (phase.phaseCode === 'fase_1_pendiente') { queue.nuevosSinFase1 += 1; }
-      if (phase.phaseCode === 'listo_fase_2') { queue.listosFase2 += 1; }
-      if (phase.phaseCode === 'listo_fase_3') { queue.listosFase3 += 1; }
-      if (phase.phaseCode === 'listo_descartar') { queue.listosDescartar += 1; }
+      funnel.contactado += 1;
+      queue.contactadosTriage += 1;
+      if (lead.channelUsed === 'instagram') {
+        funnel.contactadoIg += 1;
+      } else if (lead.channelUsed === 'llamada') {
+        funnel.contactadoCall += 1;
+      } else {
+        funnel.contactadoWa += 1;
+      }
       return;
     }
     if (st === 'seguimiento') {
@@ -339,7 +338,13 @@ export function buildDashboardSnapshot(leads, nowMs) {
       respondedCount += 1;
       rubroMap[rKey].responded += 1;
       const urg = evaluateReminderUrgency(lead, now);
-      if (urg.level === 'overdue') { queue.seguimientoOverdue += 1; queue.seguimientoUrgent += 1; } else if (urg.level === 'today') { queue.seguimientoToday += 1; queue.seguimientoUrgent += 1; }
+      if (urg.level === 'overdue') {
+        queue.seguimientoOverdue += 1;
+        queue.seguimientoUrgent += 1;
+      } else if (urg.level === 'today') {
+        queue.seguimientoToday += 1;
+        queue.seguimientoUrgent += 1;
+      }
       return;
     }
     if (st === 'vendido') {
@@ -352,7 +357,12 @@ export function buildDashboardSnapshot(leads, nowMs) {
       rubroMap[rKey].revenue += amt;
       return;
     }
-    if (st === 'descartado') { funnel.descartado += 1; }
+    if (st === 'descartado') {
+      funnel.descartado += 1;
+      if (lead.isMetaBot) {
+        funnel.descartadoBotMeta += 1;
+      }
+    }
   });
 
   const rubroStats = RUBRO_CATALOG.map((r) => {
@@ -383,14 +393,13 @@ export function buildDashboardSnapshot(leads, nowMs) {
 export function matchesQueueFilter(lead, queueKey, nowMs) {
   if (!queueKey) { return true; }
   const now = nowMs ? nowMs : Date.now();
-  const st = lead.status ? lead.status : 'nuevo';
+  const st = lead.stage ? lead.stage : (lead.status ? lead.status : 'nuevo');
   if (queueKey === 'seg_urgente') { return st === 'seguimiento' && evaluateReminderUrgency(lead, now).rank <= 1; }
-  if (queueKey === 'nuevo_f1') {
-    return st === 'nuevo' || (st === 'contactado' && (!Array.isArray(lead.sentTags) || lead.sentTags.length === 0));
+  if (queueKey === 'nuevo_pendiente') { return st === 'nuevo'; }
+  if (queueKey === 'contactado_triage') { return st === 'contactado'; }
+  if (queueKey === 'sin_whatsapp_alt') { return st === 'sin_whatsapp'; }
+  if (queueKey.startsWith('int_')) {
+    return Array.isArray(lead.interestTags) && lead.interestTags.some((t) => t.id === queueKey);
   }
-  if (queueKey === 'listo_f2') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_fase_2'; }
-  if (queueKey === 'listo_f3') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_fase_3'; }
-  if (queueKey === 'listo_descartar') { return st === 'contactado' && evaluateLeadPhase(lead, now).phaseCode === 'listo_descartar'; }
-  if (queueKey.startsWith('int_')) { return Array.isArray(lead.interestTags) && lead.interestTags.some((t) => t.id === queueKey); }
   return true;
 }

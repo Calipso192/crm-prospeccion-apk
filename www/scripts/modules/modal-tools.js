@@ -14,7 +14,7 @@ export {
 
 let toastTimer = null;
 
-function showAppToast(text, isError) {
+export function showAppToast(text, isError) {
   if (typeof document === 'undefined') {
     return;
   }
@@ -44,12 +44,14 @@ function showModalFeedback(el, text, isError) {
 async function getExportArgs(leads) {
   const tplMod = await import('../services/template-service.js');
   const phaseMod = await import('../services/phase-engine.js');
+  const chanMod = await import('../services/channel-service.js');
   return [
     leads,
     tplMod.getTemplates('all'),
     tplMod.getCampaigns(),
     phaseMod.getInterestTagsCatalog(),
-    tplMod.getActiveCampaignId()
+    tplMod.getActiveCampaignId(),
+    chanMod.exportChannelStats()
   ];
 }
 
@@ -113,12 +115,20 @@ export async function importBackupJson(file, feedbackEl, onComplete) {
     const backupMod = await import('../services/backup-service.js');
     const tplMod = await import('../services/template-service.js');
     const phaseMod = await import('../services/phase-engine.js');
+    const chanMod = await import('../services/channel-service.js');
     const data = await backupMod.readBackupFile(file);
 
     const campStats = tplMod.mergeCampaigns(data.campaigns, data.activeCampaignId);
     const tplStats = tplMod.mergeTemplates(data.templates);
     const intStats = phaseMod.mergeInterestTagsCatalog(data.interestTagsCatalog, data.leads);
-    const mergeStats = await mergeImportedLeads(data.leads);
+    if (data.channelStats) {
+      chanMod.mergeChannelStats(data.channelStats);
+    }
+    const knownCampaignIds = tplMod.getCampaigns().map((c) => c.id);
+    const mergeStats = await mergeImportedLeads(data.leads, {
+      defaultCampaignId: tplMod.getActiveCampaignId(),
+      knownCampaignIds: knownCampaignIds
+    });
 
     if (onComplete) {
       await onComplete();
@@ -145,7 +155,11 @@ export async function importBulkLeads(textareaEl, rubroSelectEl, feedbackEl, onC
   const defaultRubro = rubroSelectEl ? rubroSelectEl.value : '';
   const parsedList = backupMod.parseBulkLeadsText(textareaEl.value, defaultRubro);
   if (parsedList.length === 0) {
-    showModalFeedback(feedbackEl, 'No se detectaron contactos válidos. Usa: Nombre - Número', true);
+    showModalFeedback(
+      feedbackEl,
+      'No se detectaron contactos válidos. Usa: Nombre - 9XXXXXXXX, Nombre - @usuario o Nombre - 9XXXXXXXX - @usuario',
+      true
+    );
     return;
   }
   const stats = await bulkInsertLeads(parsedList, {
@@ -155,6 +169,6 @@ export async function importBulkLeads(textareaEl, rubroSelectEl, feedbackEl, onC
   if (onComplete) {
     await onComplete();
   }
-  const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' duplicados omitidos).' : '.';
-  showModalFeedback(feedbackEl, 'Se agregaron ' + stats.added + ' prospectos nuevos' + extra, false);
+  const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' ya existentes omitidos).' : '.';
+  showModalFeedback(feedbackEl, 'Se agregaron ' + stats.added + ' prospectos a esta campaña' + extra, false);
 }

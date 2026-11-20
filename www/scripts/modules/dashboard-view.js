@@ -12,11 +12,68 @@ function createEl(tag, className, text) {
   return el;
 }
 
+function buildChannelBlock(channelSnapshot, handlers) {
+  const snap = channelSnapshot ? channelSnapshot : {
+    activeWaLine: 'wa_1', waLines: [], todayInstagram: 0, todayCalls: 0
+  };
+  const card = createEl('section', 'dash-card');
+  const header = createEl('div', 'dash-card-header');
+  header.appendChild(createEl('h2', 'dash-card-title', '1. Canales y Cuotas'));
+  const activeObj = snap.waLines.find((l) => l.id === snap.activeWaLine);
+  const activeLabel = activeObj ? activeObj.label : 'WA 1';
+  header.appendChild(createEl('span', 'badge', 'Línea activa: ' + activeLabel));
+  card.appendChild(header);
+
+  const waGrid = createEl('div', 'wa-lines-grid');
+  snap.waLines.forEach((line) => {
+    const isActive = line.id === snap.activeWaLine;
+    let cls = 'wa-line-btn';
+    if (isActive) { cls += ' active'; }
+    if (line.isAtLimit) { cls += ' line-full'; }
+    else if (line.isNearLimit) { cls += ' line-warn'; }
+
+    const btn = createEl('button', cls);
+    btn.type = 'button';
+    const top = createEl('div', 'wa-line-top');
+    top.appendChild(createEl('span', '', line.label));
+    top.appendChild(createEl('span', 'wa-line-quota', line.count + '/' + line.limit));
+    btn.appendChild(top);
+
+    const bar = createEl('div', 'wa-line-bar');
+    const fill = createEl('div', 'wa-line-fill');
+    fill.style.width = line.pct + '%';
+    bar.appendChild(fill);
+    btn.appendChild(bar);
+
+    btn.addEventListener('click', () => {
+      if (handlers.onSelectWaLine) {
+        handlers.onSelectWaLine(line.id);
+      }
+    });
+    waGrid.appendChild(btn);
+  });
+  card.appendChild(waGrid);
+
+  const dailyRow = createEl('div', 'channel-daily-row');
+  const igPill = createEl('div', 'channel-daily-pill channel-daily-ig');
+  igPill.appendChild(createEl('span', '', 'Instagram DM hoy'));
+  igPill.appendChild(createEl('strong', '', snap.todayInstagram));
+  dailyRow.appendChild(igPill);
+
+  const callPill = createEl('div', 'channel-daily-pill channel-daily-call');
+  callPill.appendChild(createEl('span', '', 'Llamadas hoy'));
+  callPill.appendChild(createEl('strong', '', snap.todayCalls));
+  dailyRow.appendChild(callPill);
+  card.appendChild(dailyRow);
+
+  return card;
+}
+
 function buildQueueBlock(queue, handlers) {
   const card = createEl('section', 'dash-card');
   const header = createEl('div', 'dash-card-header');
-  header.appendChild(createEl('h2', 'dash-card-title', '1. Cola de Pendientes del Día'));
-  const totalPending = queue.seguimientoUrgent + queue.nuevosSinFase1 + queue.listosFase2 + queue.listosFase3 + queue.listosDescartar;
+  header.appendChild(createEl('h2', 'dash-card-title', '2. Cola de Pendientes del Día'));
+  const totalPending = queue.seguimientoUrgent + queue.nuevosPendientes + queue.contactadosTriage + queue.sinWhatsappAlt;
   header.appendChild(createEl('span', 'badge', totalPending + ' acciones'));
   card.appendChild(header);
 
@@ -31,35 +88,27 @@ function buildQueueBlock(queue, handlers) {
       tone: queue.seguimientoOverdue > 0 ? 'tone-danger' : 'tone-warning'
     },
     {
-      key: 'nuevo_f1',
-      status: 'todos',
-      count: queue.nuevosSinFase1,
-      label: 'Nuevos sin Fase 1',
-      sub: 'Listos 1er mensaje',
+      key: 'nuevo_pendiente',
+      status: 'nuevo',
+      count: queue.nuevosPendientes,
+      label: 'Nuevos por contactar',
+      sub: '1er disparo pendiente',
       tone: 'tone-info'
     },
     {
-      key: 'listo_f2',
+      key: 'contactado_triage',
       status: 'contactado',
-      count: queue.listosFase2,
-      label: 'Listos para Fase 2',
-      sub: '+3 días sin respuesta',
+      count: queue.contactadosTriage,
+      label: 'Contactados en triage',
+      sub: 'Clasificar respuesta en 1 toque',
       tone: 'tone-primary'
     },
     {
-      key: 'listo_f3',
-      status: 'contactado',
-      count: queue.listosFase3,
-      label: 'Listos para Fase 3',
-      sub: '+4 días desde Fase 2',
-      tone: 'tone-purple'
-    },
-    {
-      key: 'listo_descartar',
-      status: 'contactado',
-      count: queue.listosDescartar,
-      label: 'Listos para Descartar',
-      sub: '+24h tras Fase 3',
+      key: 'sin_whatsapp_alt',
+      status: 'sin_whatsapp',
+      count: queue.sinWhatsappAlt,
+      label: 'Sin WhatsApp',
+      sub: 'Abordar por IG DM o Llamada',
       tone: 'tone-muted'
     }
   ];
@@ -85,25 +134,43 @@ function buildQueueBlock(queue, handlers) {
 function buildFunnelBlock(funnel, campaignState, handlers) {
   const card = createEl('section', 'dash-card');
   const header = createEl('div', 'dash-card-header');
-  header.appendChild(createEl('h2', 'dash-card-title', '2. Embudo de Campaña Activa'));
-  const btnNewCamp = createEl('button', 'btn-primary btn-compact', '+ Nueva Campaña');
+  header.appendChild(createEl('h2', 'dash-card-title', '3. Embudo de Campaña'));
+
+  const list = Array.isArray(campaignState.campaigns) ? campaignState.campaigns : [];
+  const activeCamp = campaignState.activeCampaign
+    ? campaignState.activeCampaign
+    : list.find((c) => c.id === campaignState.activeCampaignId);
+  const isClosed = Boolean(activeCamp && activeCamp.status === 'cerrada');
+
+  const actionsWrap = createEl('div', 'dash-camp-actions');
+  if (activeCamp) {
+    const btnToggle = createEl('button', 'btn-secondary btn-compact', isClosed ? 'Reabrir' : 'Cerrar');
+    btnToggle.type = 'button';
+    btnToggle.addEventListener('click', () => {
+      if (handlers.onToggleCampaignStatus) {
+        handlers.onToggleCampaignStatus(activeCamp);
+      }
+    });
+    actionsWrap.appendChild(btnToggle);
+  }
+  const btnNewCamp = createEl('button', 'btn-primary btn-compact', '+ Nueva');
   btnNewCamp.type = 'button';
   btnNewCamp.addEventListener('click', () => {
     if (handlers.onOpenNewCampaign) {
       handlers.onOpenNewCampaign();
     }
   });
-  header.appendChild(btnNewCamp);
+  actionsWrap.appendChild(btnNewCamp);
+  header.appendChild(actionsWrap);
   card.appendChild(header);
 
   const campRow = createEl('div', 'dash-campaign-row');
   const select = createEl('select', 'dash-campaign-select');
   select.setAttribute('aria-label', 'Seleccionar campaña activa');
-  const list = Array.isArray(campaignState.campaigns) ? campaignState.campaigns : [];
   list.forEach((camp) => {
     const opt = document.createElement('option');
     opt.value = camp.id;
-    opt.textContent = camp.name;
+    opt.textContent = camp.status === 'cerrada' ? camp.name + ' (Cerrada)' : camp.name;
     if (camp.id === campaignState.activeCampaignId) {
       opt.selected = true;
     }
@@ -115,14 +182,29 @@ function buildFunnelBlock(funnel, campaignState, handlers) {
     }
   });
   campRow.appendChild(select);
+  const statusPillCls = isClosed ? 'camp-status-pill camp-status-cerrada' : 'camp-status-pill camp-status-activa';
+  campRow.appendChild(createEl('span', statusPillCls, isClosed ? 'Cerrada' : 'Activa'));
   card.appendChild(campRow);
+
+  if (isClosed) {
+    card.appendChild(createEl(
+      'p',
+      'closed-camp-banner',
+      'Campaña cerrada: sus métricas permanecen intactas. Toca "Reabrir" para volver a prospectar en ella.'
+    ));
+  }
+
+  const contactSub = 'WA: ' + funnel.contactadoWa + ' · IG: ' + funnel.contactadoIg + ' · Tel: ' + funnel.contactadoCall;
+  const discardLabel = funnel.descartadoBotMeta > 0
+    ? 'Descartados (Bot Meta: ' + funnel.descartadoBotMeta + ')'
+    : 'Descartados';
 
   const stages = [
     { status: 'nuevo', label: 'Nuevos', count: funnel.nuevo, cls: 'stage-nuevo' },
-    { status: 'contactado', label: 'Contactado (F1: ' + funnel.contactadoF1 + ' · F2: ' + funnel.contactadoF2 + ' · F3: ' + funnel.contactadoF3 + ')', count: funnel.contactadoTotal, cls: 'stage-contactado' },
+    { status: 'contactado', label: 'Contactado (' + contactSub + ')', count: funnel.contactado, cls: 'stage-contactado' },
     { status: 'seguimiento', label: 'Seguimiento vivo', count: funnel.seguimiento, cls: 'stage-seguimiento' },
     { status: 'vendido', label: 'Vendidos', count: funnel.vendido, cls: 'stage-vendido' },
-    { status: 'descartado', label: 'Descartados', count: funnel.descartado, cls: 'stage-descartado' }
+    { status: 'descartado', label: discardLabel, count: funnel.descartado, cls: 'stage-descartado' }
   ];
   if (funnel.sinWhatsapp > 0) {
     stages.push({ status: 'sin_whatsapp', label: 'Sin WhatsApp', count: funnel.sinWhatsapp, cls: 'stage-sin_whatsapp' });
@@ -161,7 +243,7 @@ function buildFunnelBlock(funnel, campaignState, handlers) {
 function buildSalesAndHeatBlock(sales, handlers) {
   const card = createEl('section', 'dash-card');
   const header = createEl('div', 'dash-card-header');
-  header.appendChild(createEl('h2', 'dash-card-title', '3. Termómetro de Calientes y Ventas'));
+  header.appendChild(createEl('h2', 'dash-card-title', '4. Termómetro de Calientes y Ventas'));
   const btnGear = createEl('button', 'btn-secondary btn-compact', '⚙ Etiquetas');
   btnGear.type = 'button';
   btnGear.setAttribute('aria-label', 'Personalizar etiquetas de interés');
@@ -209,7 +291,7 @@ function buildSalesAndHeatBlock(sales, handlers) {
 function buildRubroAndOpsBlock(rubroStats, backupMeta, handlers) {
   const card = createEl('section', 'dash-card');
   const header = createEl('div', 'dash-card-header');
-  header.appendChild(createEl('h2', 'dash-card-title', '4. Efectividad por Rubro y Carga Rápida'));
+  header.appendChild(createEl('h2', 'dash-card-title', '5. Efectividad por Rubro y Carga Rápida'));
   card.appendChild(header);
 
   const table = createEl('div', 'dash-rubro-list');
@@ -247,12 +329,13 @@ function buildRubroAndOpsBlock(rubroStats, backupMeta, handlers) {
   return card;
 }
 
-export function renderDashboardView(containerEl, leads, campaignState, backupMeta, handlers) {
+export function renderDashboardView(containerEl, leads, campaignState, backupMeta, channelSnapshot, handlers) {
   if (!containerEl) {
     return;
   }
   const snapshot = buildDashboardSnapshot(leads, Date.now());
   containerEl.innerHTML = '';
+  containerEl.appendChild(buildChannelBlock(channelSnapshot, handlers));
   containerEl.appendChild(buildQueueBlock(snapshot.queue, handlers));
   containerEl.appendChild(buildFunnelBlock(snapshot.funnel, campaignState, handlers));
   containerEl.appendChild(buildSalesAndHeatBlock(snapshot.sales, handlers));

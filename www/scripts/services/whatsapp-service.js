@@ -1,6 +1,7 @@
-import { normalizePhone } from './lead-schema.js';
+import { normalizePhone, normalizeInstagram } from './lead-schema.js';
 
 export const sanitizePhone = normalizePhone;
+export const sanitizeInstagram = normalizeInstagram;
 
 export function isCapacitorNative() {
   if (typeof window === 'undefined') {
@@ -50,8 +51,11 @@ export function buildFreeMessage(lead) {
   if (lead && Array.isArray(lead.quickNotes) && lead.quickNotes.length > 0) {
     contextNote = lead.quickNotes[0].text ? String(lead.quickNotes[0].text).trim() : '';
   }
-  if (!contextNote && lead && lead.notes) {
-    contextNote = String(lead.notes).trim();
+  if (!contextNote && lead) {
+    const rawBase = lead.baseNotes ? lead.baseNotes : lead.notes;
+    if (rawBase) {
+      contextNote = String(rawBase).trim();
+    }
   }
   const intro = 'Hola ' + name + ', un gusto saludarte.';
   if (contextNote) {
@@ -61,7 +65,7 @@ export function buildFreeMessage(lead) {
 }
 
 export function openWhatsAppChat(lead, customMessage) {
-  const cleanPhone = sanitizePhone(lead.phone);
+  const cleanPhone = sanitizePhone(lead && lead.phone);
   if (!cleanPhone) {
     return false;
   }
@@ -77,8 +81,16 @@ export function openWhatsAppDirect(lead) {
   return openWhatsAppChat(lead, '');
 }
 
+export function openInstagramProfile(lead) {
+  const handle = sanitizeInstagram(lead && lead.instagram);
+  if (!handle) {
+    return false;
+  }
+  return openExternalTarget('https://instagram.com/' + encodeURIComponent(handle));
+}
+
 export function openPhoneCall(lead) {
-  const cleanPhone = sanitizePhone(lead.phone);
+  const cleanPhone = sanitizePhone(lead && lead.phone);
   if (!cleanPhone) {
     return false;
   }

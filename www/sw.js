@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v8';
+const CACHE_NAME = 'crm-prospeccion-v9';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -7,11 +7,14 @@ const ASSETS_TO_CACHE = [
   './styles/main.css',
   './styles/features.css',
   './styles/dashboard.css',
+  './styles/multichannel.css',
   './scripts/app.js',
   './scripts/services/lead-schema.js',
+  './scripts/services/db-storage.js',
   './scripts/services/db-service.js',
   './scripts/services/phase-engine.js',
   './scripts/services/whatsapp-service.js',
+  './scripts/services/channel-service.js',
   './scripts/services/template-service.js',
   './scripts/services/reminder-service.js',
   './scripts/services/backup-service.js',

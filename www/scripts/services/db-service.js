@@ -1,200 +1,113 @@
 import {
-  DEFAULT_CAMPAIGN_ID, normalizePhone, normalizeStatus,
-  normalizeRecord, mergeLeadRecords, applySentTagToLead, applyArchiveToLead
+  DEFAULT_CAMPAIGN_ID, normalizePhone, normalizeInstagram, normalizeChannel, normalizeWaLine,
+  normalizeStatus, parseSaleAmount, createDefaultCampaignState, normalizeCampaignState,
+  normalizeMasterRecord, mergeMasterLeadRecords, applySentTagToCampaignState,
+  needsV4Migration, hasBoughtInAnyCampaign
 } from './lead-schema.js';
+import {
+  enqueueWrite, waitForWriteQueue, getAutoBackupMeta, resetAutoBackupCounter,
+  readMirrorSnapshot, runTx, readAllRawFromDb, refreshMirrorFromDb
+} from './db-storage.js';
 
-export { normalizePhone, normalizeRecord };
+export {
+  getAutoBackupMeta, resetAutoBackupCounter,
+  normalizePhone, normalizeInstagram, normalizeMasterRecord, normalizeMasterRecord as normalizeRecord
+};
 
-const DB_NAME = 'crm_prospeccion_db';
-const DB_VERSION = 3;
-const STORE_NAME = 'leads';
-const MIRROR_KEY = 'crm_prospeccion_leads_mirror_v2';
-const BACKUP_META_KEY = 'crm_prospeccion_backup_meta_v2';
-
-let dbConnectionPromise = null;
-let writeQueue = Promise.resolve();
-let mirrorQuotaExceededMem = false;
-
-function enqueueWrite(taskFn) {
-  const run = writeQueue.then(taskFn, taskFn);
-  writeQueue = run.catch(() => {});
-  return run;
+function hasValidChannel(phone, instagram) {
+  return phone.length >= 7 ? true : instagram.length >= 2;
 }
 
-function defaultBackupMeta() {
-  return {
-    changesSinceExport: 0, lastAutoBackupAt: 0, lastExportAt: 0,
-    mirrorQuotaExceeded: mirrorQuotaExceededMem, explicitlyEmpty: false
-  };
-}
-
-export function getAutoBackupMeta() {
-  try {
-    const raw = localStorage.getItem(BACKUP_META_KEY);
-    if (!raw) { return defaultBackupMeta(); }
-    const p = JSON.parse(raw);
-    return {
-      changesSinceExport: Number(p.changesSinceExport) > 0 ? Number(p.changesSinceExport) : 0,
-      lastAutoBackupAt: Number(p.lastAutoBackupAt) > 0 ? Number(p.lastAutoBackupAt) : 0,
-      lastExportAt: Number(p.lastExportAt) > 0 ? Number(p.lastExportAt) : 0,
-      mirrorQuotaExceeded: Boolean(p.mirrorQuotaExceeded || mirrorQuotaExceededMem),
-      explicitlyEmpty: Boolean(p.explicitlyEmpty)
-    };
-  } catch (error) {
-    return defaultBackupMeta();
-  }
-}
-
-function writeBackupMeta(meta) {
-  try { localStorage.setItem(BACKUP_META_KEY, JSON.stringify(meta)); } catch (e) { return; }
-}
-
-export function resetAutoBackupCounter() {
-  const next = Object.assign({}, getAutoBackupMeta(), { changesSinceExport: 0, lastExportAt: Date.now() });
-  writeBackupMeta(next);
-  return next;
-}
-
-function syncMirrorSnapshot(records, incrementChanges) {
-  const meta = getAutoBackupMeta();
-  const nextChanges = incrementChanges ? meta.changesSinceExport + 1 : meta.changesSinceExport;
-  let quotaFailed = false;
-  let nextAutoAt = meta.lastAutoBackupAt;
-  try {
-    localStorage.setItem(MIRROR_KEY, JSON.stringify(records));
-    nextAutoAt = Date.now();
-  } catch (error) {
-    quotaFailed = true;
-  }
-  mirrorQuotaExceededMem = quotaFailed;
-  writeBackupMeta({
-    changesSinceExport: nextChanges, lastAutoBackupAt: nextAutoAt,
-    lastExportAt: meta.lastExportAt, mirrorQuotaExceeded: quotaFailed, explicitlyEmpty: records.length === 0
+function findMatchingMaster(list, cleanPhone, cleanIg, excludeId) {
+  const shortPhone = (cleanPhone.length === 11 && cleanPhone.startsWith('51')) ? cleanPhone.slice(2) : '';
+  return list.find((item) => {
+    if (excludeId && item.id === excludeId) { return false; }
+    if (cleanPhone && item.phone) {
+      if (item.phone === cleanPhone ? true : (shortPhone && item.phone === shortPhone)) { return true; }
+      if (item.phone.length === 11 && item.phone.startsWith('51') && item.phone.slice(2) === cleanPhone) { return true; }
+    }
+    return Boolean(cleanIg && item.instagram && item.instagram === cleanIg);
   });
 }
 
-function readMirrorSnapshot() {
-  try {
-    const raw = localStorage.getItem(MIRROR_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeRecord) : [];
-  } catch (error) {
-    return [];
-  }
-}
-
-function getDbConnection() {
-  if (dbConnectionPromise) { return dbConnectionPromise; }
-  dbConnectionPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      const store = !db.objectStoreNames.contains(STORE_NAME)
-        ? db.createObjectStore(STORE_NAME, { keyPath: 'id' })
-        : (request.transaction || event.target.transaction).objectStore(STORE_NAME);
-      ['status', 'updatedAt', 'phone', 'campaignId'].forEach((idx) => {
-        if (!store.indexNames.contains(idx)) { store.createIndex(idx, idx, { unique: false }); }
-      });
-    };
-    request.onsuccess = (event) => {
-      const db = event.target.result;
-      db.onversionchange = () => { db.close(); dbConnectionPromise = null; };
-      resolve(db);
-    };
-    request.onerror = (event) => { dbConnectionPromise = null; reject(event.target.error); };
-  });
-  return dbConnectionPromise;
-}
-
-function idbReq(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function runTx(mode, bodyFn) {
-  const db = await getDbConnection();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, mode);
-    let result;
-    tx.oncomplete = () => resolve(result);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Transacción cancelada'));
-    bodyFn(tx.objectStore(STORE_NAME), (val) => { result = val; }, reject);
-  });
-}
-
-async function _refreshMirrorFromDb(incrementChanges) {
-  const db = await getDbConnection();
-  const raw = await idbReq(db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll());
-  const records = (Array.isArray(raw) ? raw : []).map(normalizeRecord);
-  records.sort((a, b) => b.updatedAt - a.updatedAt);
-  syncMirrorSnapshot(records, incrementChanges);
-  return records;
-}
-
-function findPhoneMatchesInTx(store, cleanPhone) {
-  const queries = [cleanPhone];
-  if (cleanPhone.length === 11 && cleanPhone.startsWith('51')) { queries.push(cleanPhone.slice(2)); }
-  const phoneIndex = store.index('phone');
-  return Promise.all(queries.map((q) => idbReq(phoneIndex.getAll(q)).then((res) => (Array.isArray(res) ? res : []))))
-    .then((groups) => groups.flat());
+function registerInMaps(item, byPhone, byIg, byId) {
+  if (item.phone) { byPhone.set(item.phone, item); }
+  if (item.instagram) { byIg.set(item.instagram, item); }
+  if (item.id) { byId.set(item.id, item); }
 }
 
 async function _mergeImportedLeadsCore(incomingLeads, options) {
   const list = Array.isArray(incomingLeads) ? incomingLeads : [];
   if (list.length === 0) { return { added: 0, updated: 0 }; }
+  const opts = options ? options : {};
+  const fallbackCampId = opts.defaultCampaignId ? String(opts.defaultCampaignId) : DEFAULT_CAMPAIGN_ID;
   const stats = await runTx('readwrite', (store, setResult) => {
     store.getAll().onsuccess = (ev) => {
+      const rawList = Array.isArray(ev.target.result) ? ev.target.result : [];
       const byPhone = new Map();
-      (Array.isArray(ev.target.result) ? ev.target.result : []).map(normalizeRecord).forEach((item) => {
-        if (item.phone) { byPhone.set(item.phone, item); }
-      });
+      const byIg = new Map();
+      const byId = new Map();
+      rawList.map((x) => normalizeMasterRecord(x, fallbackCampId)).forEach((item) => registerInMaps(item, byPhone, byIg, byId));
       const now = Date.now();
       let added = 0;
       let updated = 0;
       list.forEach((raw, idx) => {
         const cleanPhone = normalizePhone(raw && raw.phone);
-        if (cleanPhone.length < 7) { return; }
-        const incoming = normalizeRecord(Object.assign({}, raw, { phone: cleanPhone }));
-        const current = byPhone.get(cleanPhone);
+        const cleanIg = normalizeInstagram(raw && raw.instagram);
+        if (!hasValidChannel(cleanPhone, cleanIg)) { return; }
+        const incoming = normalizeMasterRecord(Object.assign({}, raw, { phone: cleanPhone, instagram: cleanIg }), fallbackCampId, opts);
+        let current = cleanPhone ? byPhone.get(cleanPhone) : null;
+        if (!current && cleanIg) { current = byIg.get(cleanIg); }
+        if (!current && incoming.id) { current = byId.get(incoming.id); }
         if (!current) {
           const id = incoming.id ? String(incoming.id) : 'lead_' + now + '_' + idx + '_' + Math.random().toString(36).slice(2, 7);
           const createdAt = Number(incoming.createdAt) > 0 ? Number(incoming.createdAt) : now;
           const updatedAt = Number(incoming.updatedAt) > 0 ? Number(incoming.updatedAt) : createdAt;
-          const fresh = normalizeRecord(Object.assign({}, incoming, { id, createdAt, updatedAt }));
+          const fresh = normalizeMasterRecord(Object.assign({}, incoming, { id, createdAt, updatedAt }), fallbackCampId, opts);
           store.put(fresh);
-          byPhone.set(cleanPhone, fresh);
+          registerInMaps(fresh, byPhone, byIg, byId);
           added += 1;
         } else {
-          const merged = mergeLeadRecords(current, incoming);
+          const merged = mergeMasterLeadRecords(current, incoming, fallbackCampId, opts);
           store.put(merged);
-          byPhone.set(cleanPhone, merged);
+          registerInMaps(merged, byPhone, byIg, byId);
           updated += 1;
         }
       });
       setResult({ added, updated });
     };
   });
-  await _refreshMirrorFromDb(!(options && options.skipIncrementChanges));
+  await refreshMirrorFromDb(!opts.skipIncrementChanges, fallbackCampId);
   return stats;
 }
 
-async function _updateSingleLeadCore(leadId, updaterFn) {
-  const updated = await runTx('readwrite', (store, setResult) => {
-    store.get(leadId).onsuccess = (ev) => {
-      if (!ev.target.result) { setResult(null); return; }
-      const record = normalizeRecord(ev.target.result);
-      const now = Date.now();
-      updaterFn(record, now);
-      record.updatedAt = now;
-      store.put(record);
-      setResult(record);
-    };
+function updateSingleMaster(leadId, updaterFn) {
+  return enqueueWrite(async () => {
+    const updated = await runTx('readwrite', (store, setResult) => {
+      store.get(leadId).onsuccess = (ev) => {
+        if (!ev.target.result) { setResult(null); return; }
+        const record = normalizeMasterRecord(ev.target.result);
+        const now = Date.now();
+        updaterFn(record, now);
+        record.updatedAt = now;
+        store.put(record);
+        setResult(record);
+      };
+    });
+    if (updated) { await refreshMirrorFromDb(true); }
+    return updated;
   });
-  if (updated) { await _refreshMirrorFromDb(true); }
-  return updated;
+}
+
+function updateCampaignState(leadId, campaignId, updaterFn) {
+  const targetCid = campaignId ? String(campaignId) : DEFAULT_CAMPAIGN_ID;
+  return updateSingleMaster(leadId, (record, now) => {
+    const existing = record.campaignStates[targetCid];
+    const campState = existing ? normalizeCampaignState(existing, now) : createDefaultCampaignState('nuevo', now);
+    updaterFn(campState, record, now);
+    campState.updatedAt = now;
+    record.campaignStates[targetCid] = campState;
+  });
 }
 
 async function _mutateAllRecordsCore(mutatorFn, options) {
@@ -203,65 +116,146 @@ async function _mutateAllRecordsCore(mutatorFn, options) {
       const now = Date.now();
       let updatedCount = 0;
       (Array.isArray(ev.target.result) ? ev.target.result : []).forEach((raw) => {
-        const record = normalizeRecord(raw);
+        const record = normalizeMasterRecord(raw);
         if (mutatorFn(record, now)) { store.put(record); updatedCount += 1; }
       });
       setResult(updatedCount);
     };
   });
-  if (count > 0) { await _refreshMirrorFromDb(!(options && options.skipIncrementChanges)); }
+  if (count > 0) { await refreshMirrorFromDb(!(options && options.skipIncrementChanges)); }
   return count;
 }
 
-export async function getAllLeads() {
-  await writeQueue;
-  const db = await getDbConnection();
-  const raw = await idbReq(db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll());
-  const rawRecords = Array.isArray(raw) ? raw : [];
-  if (rawRecords.length === 0) {
-    const meta = getAutoBackupMeta();
-    if (!meta.explicitlyEmpty && !meta.mirrorQuotaExceeded) {
-      const mirrorRecords = readMirrorSnapshot();
-      if (mirrorRecords.length > 0) {
-        await enqueueWrite(() => _mergeImportedLeadsCore(mirrorRecords, { skipIncrementChanges: true }));
-        mirrorRecords.sort((a, b) => b.updatedAt - a.updatedAt);
-        return mirrorRecords;
+function mutateAllCampaignStates(stateMutatorFn, options) {
+  return enqueueWrite(() => _mutateAllRecordsCore((record) => {
+    let changed = false;
+    Object.keys(record.campaignStates).forEach((cid) => {
+      if (stateMutatorFn(record.campaignStates[cid], cid)) { changed = true; }
+    });
+    return changed;
+  }, options));
+}
+
+export async function migrateDatabaseToV4(activeCampaignId) {
+  const targetCid = activeCampaignId ? String(activeCampaignId) : DEFAULT_CAMPAIGN_ID;
+  return enqueueWrite(async () => {
+    const rawRecords = await readAllRawFromDb();
+    if (rawRecords.length === 0) {
+      const meta = getAutoBackupMeta();
+      if (!meta.explicitlyEmpty && !meta.mirrorQuotaExceeded) {
+        const mirrorRecords = readMirrorSnapshot(targetCid);
+        if (mirrorRecords.length > 0) {
+          await _mergeImportedLeadsCore(mirrorRecords, { defaultCampaignId: targetCid, skipIncrementChanges: true, forceFallbackForLegacy: true });
+          return { migratedCount: mirrorRecords.length, totalCount: mirrorRecords.length };
+        }
       }
+      return { migratedCount: 0, totalCount: 0 };
     }
-  }
-  const records = rawRecords.map(normalizeRecord);
-  records.sort((a, b) => b.updatedAt - a.updatedAt);
-  return records;
+    const migratedCount = await runTx('readwrite', (store, setResult) => {
+      let count = 0;
+      rawRecords.forEach((item) => {
+        if (needsV4Migration(item)) { store.put(normalizeMasterRecord(item, targetCid, { forceFallbackForLegacy: true })); count += 1; }
+      });
+      setResult(count);
+    });
+    if (migratedCount > 0) { await refreshMirrorFromDb(false, targetCid); }
+    return { migratedCount: migratedCount, totalCount: rawRecords.length };
+  });
+}
+
+export async function getAllLeads(fallbackCampaignId) {
+  await waitForWriteQueue();
+  const rawRecords = await readAllRawFromDb();
+  return rawRecords.map((item) => normalizeMasterRecord(item, fallbackCampaignId)).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function buildInputCampaignState(leadData, baseState, now) {
+  const stage = normalizeStatus(leadData.stage ? leadData.stage : leadData.status);
+  const seed = baseState ? baseState : createDefaultCampaignState(stage, now);
+  return normalizeCampaignState(Object.assign({}, seed, {
+    stage: stage,
+    saleAmount: stage === 'vendido' ? parseSaleAmount(leadData.saleAmount) : 0,
+    reminderAt: leadData.reminderAt !== undefined ? leadData.reminderAt : seed.reminderAt,
+    reminderReason: leadData.reminderReason !== undefined ? leadData.reminderReason : seed.reminderReason,
+    updatedAt: now
+  }), now);
+}
+
+function createFreshMaster(name, phone, instagram, rubro, baseNotes, campaignId, stateObj, now, idx) {
+  const suffix = idx !== undefined ? idx + '_' : '';
+  return normalizeMasterRecord({
+    schemaVersion: 4,
+    id: 'lead_' + now + '_' + suffix + Math.random().toString(36).slice(2, 7),
+    name: name, phone: phone, instagram: instagram, rubro: rubro, baseNotes: baseNotes,
+    campaignStates: { [campaignId]: stateObj }, campaignHistory: [], createdAt: now, updatedAt: now
+  }, campaignId);
+}
+
+function enrollIntoExistingMaster(master, campaignId, stateObj, cleanPhone, cleanIg, rubro, baseNotes, now) {
+  return normalizeMasterRecord(Object.assign({}, master, {
+    phone: master.phone ? master.phone : cleanPhone,
+    instagram: master.instagram ? master.instagram : cleanIg,
+    rubro: master.rubro ? master.rubro : (rubro ? String(rubro).trim().toLowerCase() : ''),
+    baseNotes: master.baseNotes ? master.baseNotes : (baseNotes ? String(baseNotes).trim() : ''),
+    campaignStates: Object.assign({}, master.campaignStates, { [campaignId]: stateObj }),
+    updatedAt: now
+  }), campaignId);
 }
 
 export function saveLead(leadData, options) {
   const cleanPhone = normalizePhone(leadData && leadData.phone);
-  if (cleanPhone.length < 7) { return Promise.reject(new Error('Ingresa un número de teléfono válido.')); }
+  const cleanIg = normalizeInstagram(leadData && leadData.instagram);
+  if (!hasValidChannel(cleanPhone, cleanIg)) {
+    return Promise.reject(new Error('Ingresa un teléfono válido o un usuario de @instagram.'));
+  }
+  const targetCid = leadData && leadData.campaignId ? String(leadData.campaignId) : DEFAULT_CAMPAIGN_ID;
   return enqueueWrite(async () => {
-    const db = await getDbConnection();
-    const saved = await new Promise((resolve, reject) => {
-      const store = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME);
-      findPhoneMatchesInTx(store, cleanPhone).then((matches) => {
-        const duplicate = matches.find((item) => item.id !== leadData.id);
-        if (duplicate) {
-          if (options && options.skipDuplicate) { resolve({ skipped: true, existing: duplicate }); return; }
-          reject(new Error('El número +' + cleanPhone + ' ya está registrado como "' + duplicate.name + '".'));
+    const saved = await runTx('readwrite', (store, setResult, rejectTx) => {
+      store.getAll().onsuccess = (ev) => {
+        const allMaster = (Array.isArray(ev.target.result) ? ev.target.result : []).map((x) => normalizeMasterRecord(x, targetCid));
+        const existingById = leadData.id ? allMaster.find((x) => x.id === leadData.id) : null;
+        const duplicate = findMatchingMaster(allMaster, cleanPhone, cleanIg, leadData.id);
+        const now = Date.now();
+        const baseNotesVal = leadData.baseNotes !== undefined ? leadData.baseNotes : leadData.notes;
+
+        if (existingById) {
+          if (duplicate) { rejectTx(new Error('Ya existe otro contacto con ese teléfono o @instagram ("' + duplicate.name + '").')); return; }
+          const nextState = buildInputCampaignState(leadData, existingById.campaignStates[targetCid], now);
+          const updatedRec = normalizeMasterRecord(Object.assign({}, existingById, {
+            name: leadData.name.trim(), phone: cleanPhone, instagram: cleanIg,
+            rubro: leadData.rubro !== undefined ? leadData.rubro : existingById.rubro,
+            baseNotes: baseNotesVal !== undefined ? baseNotesVal : existingById.baseNotes,
+            campaignStates: Object.assign({}, existingById.campaignStates, { [targetCid]: nextState }),
+            updatedAt: now
+          }), targetCid);
+          store.put(updatedRec);
+          setResult(updatedRec);
           return;
         }
-        const now = Date.now();
-        const record = normalizeRecord(Object.assign({}, leadData, {
-          id: leadData.id ? leadData.id : 'lead_' + now + '_' + Math.random().toString(36).slice(2, 7),
-          name: leadData.name.trim(), phone: cleanPhone,
-          lastContactAt: leadData.lastContactAt ? leadData.lastContactAt : now,
-          campaignId: leadData.campaignId ? leadData.campaignId : DEFAULT_CAMPAIGN_ID,
-          createdAt: leadData.createdAt ? leadData.createdAt : now, updatedAt: now
-        }));
-        const putReq = store.put(record);
-        putReq.onsuccess = () => resolve(record);
-        putReq.onerror = () => reject(putReq.error);
-      }).catch(reject);
+
+        const newState = buildInputCampaignState(leadData, null, now);
+        if (duplicate) {
+          if (duplicate.campaignStates && duplicate.campaignStates[targetCid]) {
+            if (options && options.skipDuplicate) { setResult({ skipped: true, existing: duplicate }); return; }
+            rejectTx(new Error('Este contacto ya está en la campaña actual como "' + duplicate.name + '".'));
+            return;
+          }
+          const enrolled = enrollIntoExistingMaster(duplicate, targetCid, newState, cleanPhone, cleanIg, leadData.rubro, baseNotesVal, now);
+          store.put(enrolled);
+          setResult(enrolled);
+          return;
+        }
+
+        const fresh = createFreshMaster(
+          leadData.name.trim(), cleanPhone, cleanIg,
+          leadData.rubro ? leadData.rubro : '', baseNotesVal ? baseNotesVal : '',
+          targetCid, newState, now
+        );
+        store.put(fresh);
+        setResult(fresh);
+      };
     });
-    if (saved && !saved.skipped) { await _refreshMirrorFromDb(true); }
+    if (saved && !saved.skipped) { await refreshMirrorFromDb(true, targetCid); }
     return saved;
   });
 }
@@ -269,153 +263,192 @@ export function saveLead(leadData, options) {
 export function bulkInsertLeads(leadsList, options) {
   const list = Array.isArray(leadsList) ? leadsList : [];
   if (list.length === 0) { return Promise.resolve({ added: 0, skipped: 0 }); }
-  const campaignId = options && options.defaultCampaignId ? options.defaultCampaignId : DEFAULT_CAMPAIGN_ID;
+  const campaignId = options && options.defaultCampaignId ? String(options.defaultCampaignId) : DEFAULT_CAMPAIGN_ID;
   return enqueueWrite(async () => {
     const stats = await runTx('readwrite', (store, setResult) => {
       store.getAll().onsuccess = (ev) => {
-        const existingPhones = new Set();
-        (Array.isArray(ev.target.result) ? ev.target.result : []).forEach((item) => {
-          const p = normalizePhone(item && item.phone);
-          if (p) { existingPhones.add(p); }
-        });
+        const allMaster = (Array.isArray(ev.target.result) ? ev.target.result : []).map((x) => normalizeMasterRecord(x, campaignId));
         const now = Date.now();
         let added = 0;
         let skipped = 0;
         list.forEach((raw, idx) => {
           const cleanPhone = normalizePhone(raw && raw.phone);
-          if (cleanPhone.length < 7 || !raw.name) { return; }
-          if (existingPhones.has(cleanPhone)) { skipped += 1; return; }
-          store.put(normalizeRecord(Object.assign({}, raw, {
-            id: 'lead_' + now + '_' + idx + '_' + Math.random().toString(36).slice(2, 7),
-            name: String(raw.name).trim(), phone: cleanPhone,
-            campaignId: raw.campaignId ? raw.campaignId : campaignId,
-            lastContactAt: now, createdAt: now, updatedAt: now
-          })));
-          existingPhones.add(cleanPhone);
+          const cleanIg = normalizeInstagram(raw && raw.instagram);
+          const cleanName = raw && raw.name ? String(raw.name).trim() : '';
+          if (!(cleanName && hasValidChannel(cleanPhone, cleanIg))) { return; }
+          const match = findMatchingMaster(allMaster, cleanPhone, cleanIg, null);
+          if (match) {
+            if (match.campaignStates && match.campaignStates[campaignId]) { skipped += 1; return; }
+            const enrolled = enrollIntoExistingMaster(match, campaignId, createDefaultCampaignState('nuevo', now), cleanPhone, cleanIg, raw.rubro, raw.baseNotes, now);
+            store.put(enrolled);
+            added += 1;
+            return;
+          }
+          const fresh = createFreshMaster(
+            cleanName, cleanPhone, cleanIg,
+            raw.rubro ? String(raw.rubro).trim().toLowerCase() : '',
+            raw.baseNotes ? String(raw.baseNotes).trim() : '',
+            campaignId, createDefaultCampaignState('nuevo', now), now, idx
+          );
+          store.put(fresh);
+          allMaster.push(fresh);
           added += 1;
         });
         setResult({ added, skipped });
       };
     });
-    if (stats.added > 0) { await _refreshMirrorFromDb(true); }
+    if (stats.added > 0) { await refreshMirrorFromDb(true, campaignId); }
     return stats;
   });
 }
 
+export function enrollLeadsInCampaign(newCampaignId, mode) {
+  const cleanMode = mode ? String(mode) : 'empty';
+  if (cleanMode === 'empty' ? true : !newCampaignId) { return Promise.resolve({ enrolledCount: 0 }); }
+  return enqueueWrite(async () => {
+    const enrolledCount = await _mutateAllRecordsCore((record, now) => {
+      if (record.campaignStates[newCampaignId]) { return false; }
+      if (cleanMode === 'buyers' && !hasBoughtInAnyCampaign(record, newCampaignId)) { return false; }
+      record.campaignStates[newCampaignId] = createDefaultCampaignState('nuevo', now);
+      record.updatedAt = now;
+      return true;
+    });
+    return { enrolledCount: enrolledCount };
+  });
+}
+
+function setStageState(cs, stage, now, amount, isMetaBot) {
+  cs.stage = stage;
+  cs.saleAmount = stage === 'vendido' ? parseSaleAmount(amount) : 0;
+  cs.isMetaBot = stage === 'descartado' ? Boolean(isMetaBot) : false;
+  cs.lastContactAt = now;
+}
+
 export function updateLeadRubro(leadId, newRubro) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record) => {
-    record.rubro = newRubro ? String(newRubro).trim().toLowerCase() : '';
-  }));
+  return updateSingleMaster(leadId, (record) => { record.rubro = newRubro ? String(newRubro).trim().toLowerCase() : ''; });
 }
 
-export function addTagToLead(leadId, tagData) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record, now) => {
-    const sentTs = Number(tagData.sentAt) > 0 ? Number(tagData.sentAt) : now;
-    applySentTagToLead(record, tagData, sentTs, true);
-  }));
+export function updateLeadCampaignStage(leadId, campaignId, targetStage, extra) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    const cleanStage = normalizeStatus(targetStage);
+    const botFlag = extra && extra.isMetaBot !== undefined ? Boolean(extra.isMetaBot) : cs.isMetaBot;
+    setStageState(cs, cleanStage, now, extra && extra.saleAmount, botFlag);
+  });
 }
 
-export function applyLeadWhatsAppOutcome(leadId, newStatus, pendingTpl) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record, now) => {
-    record.status = normalizeStatus(newStatus);
-    if (record.status !== 'vendido') { record.saleAmount = 0; }
-    if (record.status === 'contactado' && pendingTpl && pendingTpl.id) {
-      applySentTagToLead(record, pendingTpl, now, false);
-    }
-    record.lastContactAt = now;
-  }));
+export function applyLeadWhatsAppOutcome(leadId, campaignId, outcomeAction, pendingTpl, waLineUsed) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    if (outcomeAction === 'sin_whatsapp') { setStageState(cs, 'sin_whatsapp', now, 0, false); return; }
+    if (outcomeAction === 'contactado') { setStageState(cs, 'contactado', now, 0, false); }
+    cs.channelUsed = 'whatsapp';
+    const cleanLine = normalizeWaLine(waLineUsed);
+    if (cleanLine) { cs.waLineUsed = cleanLine; }
+    if (pendingTpl && pendingTpl.id) { applySentTagToCampaignState(cs, pendingTpl, now, false); }
+    cs.lastContactAt = now;
+  });
 }
 
-export function removeTagFromLead(leadId, tagId) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record) => {
-    record.sentTags = record.sentTags.filter((item) => item.id !== tagId);
-  }));
+export function applyLeadChannelTouch(leadId, campaignId, channelKey) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    const cleanChan = normalizeChannel(channelKey);
+    if (cleanChan) { cs.channelUsed = cleanChan; }
+    if (['nuevo', 'sin_whatsapp'].includes(cs.stage)) { setStageState(cs, 'contactado', now, 0, false); }
+    cs.lastContactAt = now;
+  });
 }
 
-export function toggleInterestTag(leadId, tagObj) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record, now) => {
-    const exists = record.interestTags.some((item) => item.id === tagObj.id);
-    record.interestTags = exists
-      ? record.interestTags.filter((item) => item.id !== tagObj.id)
-      : record.interestTags.concat([{ id: String(tagObj.id), label: String(tagObj.label).trim(), taggedAt: now }]);
-    record.lastContactAt = now;
-  }));
+export function applyLeadTriageOutcome(leadId, campaignId, outcomeStage, isMetaBot) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    setStageState(cs, outcomeStage === 'seguimiento' ? 'seguimiento' : 'descartado', now, 0, isMetaBot);
+  });
 }
 
-export function addQuickNoteToLead(leadId, noteText) {
+export function addTagToLead(leadId, campaignId, tagData) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    applySentTagToCampaignState(cs, tagData, Number(tagData.sentAt) > 0 ? Number(tagData.sentAt) : now, true);
+  });
+}
+
+export function removeTagFromLead(leadId, campaignId, tagId) {
+  return updateCampaignState(leadId, campaignId, (cs) => { cs.sentTags = cs.sentTags.filter((item) => item.id !== tagId); });
+}
+
+export function toggleInterestTag(leadId, campaignId, tagObj) {
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    const exists = cs.interestTags.some((item) => item.id === tagObj.id);
+    cs.interestTags = exists
+      ? cs.interestTags.filter((item) => item.id !== tagObj.id)
+      : cs.interestTags.concat([{ id: String(tagObj.id), label: String(tagObj.label).trim(), taggedAt: now }]);
+    cs.lastContactAt = now;
+  });
+}
+
+export function addQuickNoteToLead(leadId, campaignId, noteText) {
   const cleanText = noteText ? String(noteText).trim() : '';
   if (!cleanText) { return Promise.resolve(null); }
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record, now) => {
-    record.quickNotes.unshift({
-      id: 'note_' + now + '_' + Math.random().toString(36).slice(2, 6),
-      text: cleanText, createdAt: now
-    });
-    record.lastContactAt = now;
-  }));
+  return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    cs.quickNotes.unshift({ id: 'note_' + now + '_' + Math.random().toString(36).slice(2, 6), text: cleanText, createdAt: now });
+    cs.lastContactAt = now;
+  });
 }
 
-export function removeQuickNoteFromLead(leadId, noteId) {
+export function removeQuickNoteFromLead(leadId, campaignId, noteId) {
   if (!noteId) { return Promise.resolve(null); }
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record) => {
-    record.quickNotes = record.quickNotes.filter((item) => item.id !== noteId);
-  }));
+  return updateCampaignState(leadId, campaignId, (cs) => { cs.quickNotes = cs.quickNotes.filter((item) => item.id !== noteId); });
 }
 
-export function updateLeadReminder(leadId, reminderAt, reminderReason) {
-  return enqueueWrite(() => _updateSingleLeadCore(leadId, (record) => {
-    record.reminderAt = reminderAt ? String(reminderAt).trim() : '';
-    record.reminderReason = reminderReason ? String(reminderReason).trim() : '';
-  }));
+export function updateLeadReminder(leadId, campaignId, reminderAt, reminderReason) {
+  return updateCampaignState(leadId, campaignId, (cs) => {
+    cs.reminderAt = reminderAt ? String(reminderAt).trim() : '';
+    cs.reminderReason = reminderReason ? String(reminderReason).trim() : '';
+  });
+}
+
+function renameTagsInStates(listKey, tagIdMap, options) {
+  return mutateAllCampaignStates((st) => {
+    let changed = false;
+    st[listKey] = st[listKey].map((tag) => {
+      const next = tagIdMap[tag.id];
+      if (next && tag.label !== next) { changed = true; return Object.assign({}, tag, { label: next }); }
+      return tag;
+    });
+    return changed;
+  }, options);
 }
 
 export function syncAllTagLabels(labelsMap) {
   const map = labelsMap && typeof labelsMap === 'object' ? labelsMap : {};
-  if (Object.keys(map).length === 0) { return Promise.resolve(0); }
-  return enqueueWrite(() => _mutateAllRecordsCore((record) => {
-    let changed = false;
-    record.sentTags = record.sentTags.map((tag) => {
-      const nextLabel = map[tag.id];
-      if (nextLabel && tag.label !== nextLabel) { changed = true; return Object.assign({}, tag, { label: nextLabel }); }
-      return tag;
-    });
-    return changed;
-  }, { skipIncrementChanges: true }));
+  return Object.keys(map).length === 0 ? Promise.resolve(0) : renameTagsInStates('sentTags', map, { skipIncrementChanges: true });
 }
 
 export function renameTagAcrossLeads(tagId, newLabel) {
-  const cleanLabel = newLabel ? String(newLabel).trim() : '';
-  return (!tagId || !cleanLabel) ? Promise.resolve(0) : syncAllTagLabels({ [tagId]: cleanLabel });
+  const clean = newLabel ? String(newLabel).trim() : '';
+  return (tagId && clean) ? syncAllTagLabels({ [tagId]: clean }) : Promise.resolve(0);
 }
 
 export function renameInterestTagAcrossLeads(tagId, newLabel) {
-  const cleanLabel = newLabel ? String(newLabel).trim() : '';
-  if (!tagId || !cleanLabel) { return Promise.resolve(0); }
-  return enqueueWrite(() => _mutateAllRecordsCore((record) => {
-    let changed = false;
-    record.interestTags = record.interestTags.map((tag) => {
-      if (tag.id === tagId && tag.label !== cleanLabel) { changed = true; return Object.assign({}, tag, { label: cleanLabel }); }
-      return tag;
-    });
-    return changed;
-  }));
+  const clean = newLabel ? String(newLabel).trim() : '';
+  return (tagId && clean) ? renameTagsInStates('interestTags', { [tagId]: clean }) : Promise.resolve(0);
 }
 
 export function removeInterestTagAcrossLeads(tagId) {
   if (!tagId) { return Promise.resolve(0); }
-  return enqueueWrite(() => _mutateAllRecordsCore((record) => {
-    const before = record.interestTags.length;
-    record.interestTags = record.interestTags.filter((tag) => tag.id !== tagId);
-    return record.interestTags.length !== before;
-  }));
+  return mutateAllCampaignStates((st) => {
+    const before = st.interestTags.length;
+    st.interestTags = st.interestTags.filter((tag) => tag.id !== tagId);
+    return st.interestTags.length !== before;
+  });
 }
 
-export function bulkAssignTagByStatuses(statuses, tagData) {
+export function bulkAssignTagByStatuses(campaignId, statuses, tagData) {
+  const targetCid = campaignId ? String(campaignId) : DEFAULT_CAMPAIGN_ID;
   const targetSet = Array.isArray(statuses) ? statuses : [];
-  if (targetSet.length === 0 || !tagData || !tagData.id) { return Promise.resolve(0); }
+  if (targetSet.length === 0 ? true : !(tagData && tagData.id)) { return Promise.resolve(0); }
   return enqueueWrite(() => _mutateAllRecordsCore((record, now) => {
-    if (targetSet.indexOf(record.status) === -1 || record.sentTags.some((t) => t.id === tagData.id)) { return false; }
-    const tagTime = Number(tagData.sentAt) > 0 ? Number(tagData.sentAt) : now;
-    applySentTagToLead(record, tagData, tagTime, true);
+    const cs = record.campaignStates[targetCid];
+    if (!(cs && targetSet.includes(cs.stage) && !cs.sentTags.some((t) => t.id === tagData.id))) { return false; }
+    applySentTagToCampaignState(cs, tagData, Number(tagData.sentAt) > 0 ? Number(tagData.sentAt) : now, true);
+    cs.updatedAt = now;
     record.updatedAt = now;
     return true;
   }));
@@ -431,27 +464,14 @@ export function bulkUpdateByIds(leadIds, mutatorFn) {
       uniqueIds.forEach((id) => {
         store.get(id).onsuccess = (ev) => {
           if (!ev.target.result) { return; }
-          const record = normalizeRecord(ev.target.result);
+          const record = normalizeMasterRecord(ev.target.result);
           if (mutatorFn(record, now)) { record.updatedAt = now; store.put(record); count += 1; setResult(count); }
         };
       });
       setResult(0);
     });
-    if (updatedCount > 0) { await _refreshMirrorFromDb(true); }
+    if (updatedCount > 0) { await refreshMirrorFromDb(true); }
     return updatedCount;
-  });
-}
-
-export function archiveAndStartNewCampaign(newCampaignId, previousCampaignName) {
-  return enqueueWrite(async () => {
-    const clearedReminderLeadIds = [];
-    const updatedCount = await _mutateAllRecordsCore((record, now) => {
-      if (applyArchiveToLead(record, newCampaignId, previousCampaignName, now)) {
-        clearedReminderLeadIds.push(record.id);
-      }
-      return true;
-    });
-    return { updatedCount, clearedReminderLeadIds };
   });
 }
 
@@ -462,7 +482,7 @@ export function mergeImportedLeads(incomingLeads, options) {
 export function deleteLead(id) {
   return enqueueWrite(async () => {
     await runTx('readwrite', (store) => { store.delete(id); });
-    await _refreshMirrorFromDb(true);
+    await refreshMirrorFromDb(true);
     return true;
   });
 }

@@ -1,4 +1,6 @@
 import { updateLeadRubro, bulkUpdateByIds } from '../services/db-service.js';
+import { createDefaultCampaignState, normalizeStatus, parseSaleAmount } from '../services/lead-schema.js';
+import { getActiveCampaignId } from '../services/template-service.js';
 
 export function createSelectionController(elements, state, callbacks) {
   let rubroTargetLead = null;
@@ -100,12 +102,21 @@ export function createSelectionController(elements, state, callbacks) {
     if (ids.length === 0) {
       return;
     }
-    const parsed = Number(amountValue);
-    const cleanAmount = !Number.isNaN(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
+    const cleanStage = normalizeStatus(targetStatus);
+    const cleanAmount = cleanStage === 'vendido' ? parseSaleAmount(amountValue) : 0;
+    const activeCid = getActiveCampaignId();
     await bulkUpdateByIds(ids, (record, now) => {
-      record.status = targetStatus;
-      record.saleAmount = targetStatus === 'vendido' ? cleanAmount : 0;
-      record.lastContactAt = now;
+      if (!record.campaignStates[activeCid]) {
+        record.campaignStates[activeCid] = createDefaultCampaignState(cleanStage, now);
+      }
+      const cs = record.campaignStates[activeCid];
+      cs.stage = cleanStage;
+      cs.saleAmount = cleanAmount;
+      if (cleanStage !== 'descartado') {
+        cs.isMetaBot = false;
+      }
+      cs.lastContactAt = now;
+      cs.updatedAt = now;
       return true;
     });
     exitSelection();

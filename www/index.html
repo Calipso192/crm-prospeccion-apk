@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/features.css">
   <link rel="stylesheet" href="styles/dashboard.css">
+  <link rel="stylesheet" href="styles/multichannel.css">
 </head>
 <body>
   <header class="top-bar">
@@ -29,7 +30,7 @@
       <button id="tab-leads" class="view-tab-btn" type="button" role="tab">Contactos</button>
     </div>
     <div class="search-bar">
-      <input type="search" id="search-input" placeholder="Buscar por nombre o número..." autocomplete="off">
+      <input type="search" id="search-input" placeholder="Buscar por nombre, número o @instagram..." autocomplete="off">
       <button id="btn-clear-search" class="btn-secondary btn-compact hidden" type="button">Limpiar</button>
     </div>
   </header>
@@ -46,6 +47,8 @@
       <button class="filter-chip" data-filter="descartado" type="button">Descartados</button>
       <button class="filter-chip" data-filter="sin_whatsapp" type="button">Sin WhatsApp</button>
     </nav>
+
+    <div id="leads-channel-strip" class="leads-channel-strip"></div>
 
     <section class="campaign-bar" aria-label="Filtros por rubro, interés y plantilla">
       <div class="campaign-selects">
@@ -88,7 +91,7 @@
       </div>
     </div>
     <div class="bulk-bar-actions">
-      <button id="btn-bulk-sel-tag" class="btn-primary btn-compact" type="button">+ Fase</button>
+      <button id="btn-bulk-sel-tag" class="btn-primary btn-compact" type="button">+ Plantilla</button>
       <button id="btn-bulk-sel-rubro" class="btn-secondary btn-compact" type="button">+ Rubro</button>
       <button id="btn-bulk-sel-status" class="btn-secondary btn-compact" type="button">Etapa</button>
     </div>
@@ -105,8 +108,12 @@
           <input type="text" id="lead-name" required placeholder="Ej. Cafetería Central">
         </div>
         <div class="field-group">
-          <label for="lead-phone">Teléfono (con código país)</label>
-          <input type="tel" id="lead-phone" required placeholder="Ej. 51987654321">
+          <label for="lead-phone">Teléfono (opcional si tiene @instagram)</label>
+          <input type="tel" id="lead-phone" placeholder="Ej. 51987654321">
+        </div>
+        <div class="field-group">
+          <label for="lead-instagram">Instagram (opcional si tiene teléfono)</label>
+          <input type="text" id="lead-instagram" placeholder="Ej. @cafeteriacentral">
         </div>
         <div class="field-group">
           <label for="lead-rubro">Rubro del Negocio</label>
@@ -151,7 +158,7 @@
             <button type="button" class="chip-action" data-note="Interesado en promo">+ Promo</button>
             <button type="button" class="chip-action" data-note="Sin presupuesto ahora">+ Sin presupuesto</button>
           </div>
-          <textarea id="lead-notes" rows="3" placeholder="Detalle del interés o acuerdo..."></textarea>
+          <textarea id="lead-notes" rows="3" placeholder="Detalle del negocio (compartido entre campañas)..."></textarea>
         </div>
         <div class="form-actions">
           <button id="btn-cancel-form" class="btn-secondary" type="button">Cancelar</button>
@@ -170,21 +177,18 @@
       <p id="reminder-lead-label" class="helper-hint"></p>
       <div class="scheduler-box">
         <p id="cal-selected-preview" class="cal-preview">Sin fecha seleccionada</p>
-
         <span class="scheduler-sublabel">Atajo rápido hoy (en horas)</span>
         <div id="cal-quick-hours" class="quick-chips">
           <button type="button" class="chip-action" data-hours-ahead="1">En 1 hora</button>
           <button type="button" class="chip-action" data-hours-ahead="2">En 2 horas</button>
           <button type="button" class="chip-action" data-hours-ahead="4">En 4 horas</button>
         </div>
-
         <span class="scheduler-sublabel">1. Elige el día</span>
         <div id="cal-day-chips" class="quick-chips"></div>
         <div class="custom-date-row">
           <label for="cal-custom-date">Otra fecha:</label>
           <input type="date" id="cal-custom-date">
         </div>
-
         <span class="scheduler-sublabel">2. Elige la hora</span>
         <div id="cal-hour-chips" class="quick-chips">
           <button type="button" class="chip-action" data-hour="9">09:00</button>
@@ -200,17 +204,11 @@
           <button type="button" class="chip-action active" data-minute="0">:00 en punto</button>
           <button type="button" class="chip-action" data-minute="30">:30 media hora</button>
         </div>
-
         <span class="scheduler-sublabel">3. Motivo del recordatorio</span>
         <div id="cal-reason-chips" class="quick-chips">
-          <button type="button" class="chip-action" data-reason="Cerrar venta">Cerrar venta</button>
-          <button type="button" class="chip-action" data-reason="Retomar contacto">Retomar contacto</button>
-          <button type="button" class="chip-action" data-reason="Enviar demo">Enviar demo</button>
-          <button type="button" class="chip-action" data-reason="Confirmar pedido">Confirmar pedido</button>
-          <button type="button" class="chip-action" data-reason="Llamar por teléfono">Llamar</button>
+          <button type="button" class="chip-action" data-reason="Cerrar venta">Cerrar venta</button><button type="button" class="chip-action" data-reason="Retomar contacto">Retomar contacto</button><button type="button" class="chip-action" data-reason="Enviar demo">Enviar demo</button><button type="button" class="chip-action" data-reason="Confirmar pedido">Confirmar pedido</button><button type="button" class="chip-action" data-reason="Llamar por teléfono">Llamar</button>
         </div>
         <input type="text" id="cal-reason-input" placeholder="Ej. Confirmar venta del viernes...">
-
         <button id="btn-form-calendar" class="btn-calendar btn-full" type="button">Sincronizar con Google Calendar</button>
       </div>
       <div class="modal-actions">
@@ -279,7 +277,7 @@
       <div class="modal-stack-actions">
         <button id="btn-status-contacted" class="btn-whatsapp" type="button">Se envió (Marcar Contactado)</button>
         <button id="btn-status-no-wa" class="btn-warning" type="button">No tiene WhatsApp (Guardar para llamada/redes)</button>
-        <button id="btn-status-keep" class="btn-secondary" type="button">Mantener como Nuevo</button>
+        <button id="btn-status-keep" class="btn-secondary" type="button">No se envió / Mantener estado</button>
       </div>
     </div>
   </div>
@@ -288,6 +286,7 @@
     <div class="modal-box">
       <h3>Elegir mensaje para WhatsApp</h3>
       <p id="picker-lead-name" class="helper-hint"></p>
+      <div id="picker-wa-lines" class="picker-wa-line-row"></div>
       <div id="picker-buttons-list" class="modal-stack-actions"></div>
       <div class="modal-stack-actions">
         <button id="btn-picker-free" class="btn-secondary" type="button">Mensaje libre / Notas</button>
@@ -298,7 +297,7 @@
 
   <div id="tag-picker-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 id="tag-picker-title">Asignar etiqueta de fase</h3>
+      <h3 id="tag-picker-title">Asignar plantilla</h3>
       <p id="tag-picker-lead-name" class="helper-hint"></p>
       <span class="scheduler-sublabel">Fecha de envío del toque</span>
       <div id="tag-retroactive-row" class="quick-chips"></div>
@@ -318,8 +317,8 @@
         <label for="bulk-tag-retro-select">Fecha de envío a registrar</label>
         <select id="bulk-tag-retro-select">
           <option value="0">Hoy</option>
-          <option value="3">Hace 3 días (Listo Fase 2)</option>
-          <option value="4">Hace 4 días (Listo Fase 3)</option>
+          <option value="3">Hace 3 días</option>
+          <option value="4">Hace 4 días</option>
           <option value="7">Hace 7 días</option>
         </select>
       </div>
@@ -339,9 +338,9 @@
   </div>
 
   <div id="new-campaign-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <h3>Lanzar Nueva Campaña</h3>
-      <p class="helper-hint">Archiva los resultados actuales en el historial de cada contacto y reinicia toda la base a Nuevo para prospectar otro producto.</p>
+    <div class="modal-box modal-scroll">
+      <h3>Nueva Campaña Independiente</h3>
+      <p class="helper-hint">Crea una campaña nueva sin modificar el progreso ni las ventas de tus campañas anteriores.</p>
       <p id="new-campaign-feedback" class="backup-feedback hidden"></p>
       <form id="new-campaign-form">
         <div class="field-group">
@@ -352,12 +351,26 @@
           <label for="new-campaign-desc">Objetivo breve (opcional)</label>
           <input type="text" id="new-campaign-desc" placeholder="Ej. Venta mensual a restaurantes">
         </div>
+        <div class="campaign-mode-list" role="radiogroup" aria-label="Contactos iniciales">
+          <label class="campaign-mode-option">
+            <input type="radio" name="new-campaign-mode" value="empty" checked>
+            <span><strong>Empezar vacía</strong><small>0 contactos iniciales para cargar nuevos</small></span>
+          </label>
+          <label class="campaign-mode-option">
+            <input type="radio" name="new-campaign-mode" value="all">
+            <span><strong>Traer toda la base en "Nuevo"</strong><small><span id="camp-mode-all-count">0</span> contactos (con badge si ya compró)</small></span>
+          </label>
+          <label class="campaign-mode-option">
+            <input type="radio" name="new-campaign-mode" value="buyers">
+            <span><strong>Traer solo compradores anteriores</strong><small><span id="camp-mode-buyers-count">0</span> clientes previos (Upsell)</small></span>
+          </label>
+        </div>
         <label class="bulk-check-item">
           <input type="checkbox" id="new-campaign-clone"> Copiar plantillas de la campaña actual
         </label>
         <div class="modal-actions">
           <button id="btn-cancel-new-campaign" class="btn-secondary" type="button">Cancelar</button>
-          <button id="btn-submit-new-campaign" class="btn-primary" type="submit">Iniciar Campaña</button>
+          <button id="btn-submit-new-campaign" class="btn-primary" type="submit">Crear Campaña</button>
         </div>
       </form>
     </div>
@@ -375,14 +388,14 @@
         <h4>Agregar nueva plantilla</h4>
         <div class="field-group">
           <label for="new-tpl-label">Nombre del botón</label>
-          <input type="text" id="new-tpl-label" required placeholder="Ej. Fase 1 · Gastronomía">
+          <input type="text" id="new-tpl-label" required placeholder="Ej. Primer contacto · Gastronomía">
         </div>
         <div class="template-meta-selects">
-          <select id="new-tpl-phase" aria-label="Fase sugerida">
-            <option value="0">General (Cualquier fase)</option>
-            <option value="1">Fase 1 · Primer contacto</option>
-            <option value="2">Fase 2 · Seguimiento +3d</option>
-            <option value="3">Fase 3 · Cierre ciclo +4d</option>
+          <select id="new-tpl-phase" aria-label="Momento sugerido">
+            <option value="0">General (Cualquier momento)</option>
+            <option value="1">Primer contacto (Nuevo)</option>
+            <option value="2">Respuesta (Seguimiento)</option>
+            <option value="3">Demo o cierre</option>
           </select>
           <select id="new-tpl-rubro" aria-label="Rubro específico">
             <option value="">Todos los rubros</option>
@@ -440,10 +453,9 @@
         <button id="btn-close-backup" class="btn-secondary btn-compact" type="button">Cerrar</button>
       </div>
       <p id="backup-feedback" class="backup-feedback hidden"></p>
-
       <div class="new-template-box">
         <h4>Copia de Seguridad (JSON)</h4>
-        <p class="helper-hint">Exporta o comparte tus contactos, campañas y plantillas, o restaura un archivo previo sin perder tus datos actuales.</p>
+        <p class="helper-hint">Exporta o comparte tus contactos, campañas y plantillas, o restaura un respaldo v2/v3/v4 sin perder tus datos.</p>
         <div class="backup-btn-row">
           <button id="btn-export-backup" class="btn-primary" type="button">Descargar JSON</button>
           <button id="btn-share-backup" class="btn-secondary" type="button">Compartir</button>
@@ -454,10 +466,9 @@
           <input type="file" id="input-import-backup" accept=".json,application/json">
         </div>
       </div>
-
       <div class="new-template-box">
         <h4>Importar Lote Diario por Texto</h4>
-        <p class="helper-hint">Pega hasta 50 contactos con formato Nombre - Número (uno por línea).</p>
+        <p class="helper-hint">Pega contactos (uno por línea): Nombre - 9XXXXXXXX, Nombre - @usuario o Nombre - 9XXXXXXXX - @usuario.</p>
         <div class="field-group">
           <label for="bulk-default-rubro">Rubro para este lote (opcional)</label>
           <select id="bulk-default-rubro">
@@ -471,7 +482,7 @@
         </div>
         <div class="field-group">
           <label for="bulk-leads-text">Lista de prospectos</label>
-          <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321&#10;Restaurante El Sol - 51912345678"></textarea>
+          <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321&#10;Barbería VIP - @barberia_vip&#10;Vet Patitas - 912345678 - @vet.patitas"></textarea>
         </div>
         <button id="btn-import-bulk" class="btn-whatsapp btn-full" type="button">Agregar Contactos Nuevos</button>
       </div>
