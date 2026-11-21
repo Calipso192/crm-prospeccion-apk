@@ -44,8 +44,7 @@ export function resolveDirectoryConst(dirName) {
 
 function getNativeDirCandidates() {
   return [
-    { key: 'EXTERNAL_STORAGE', basePath: 'Download/' + BLAP_SYNC_FOLDER, label: 'Download/' + BLAP_SYNC_FOLDER },
-    { key: 'DOCUMENTS', basePath: BLAP_SYNC_FOLDER, label: 'Documentos/' + BLAP_SYNC_FOLDER },
+    { key: 'DOCUMENTS', basePath: BLAP_SYNC_FOLDER, label: 'Documents/' + BLAP_SYNC_FOLDER },
     { key: 'CACHE', basePath: BLAP_SYNC_FOLDER, label: 'Cache/' + BLAP_SYNC_FOLDER }
   ];
 }
@@ -127,7 +126,7 @@ export async function writeNativeBlapFile(subFolder, fileName, content, preferre
         dirKey: cand.key,
         uri: uri,
         displayPath: uri ? baseDisplay + ' (' + uri + ')' : baseDisplay,
-        usedFallback: cand.key !== 'EXTERNAL_STORAGE'
+        usedFallback: cand.key !== 'DOCUMENTS'
       };
     } catch (err) {
       lastError = err;
@@ -165,7 +164,7 @@ export async function writeNativeCacheTempFile(fileName, content) {
 async function readNativeBlapFile(fileName, subFolder) {
   const fsPlugin = getCapacitorPlugin('Filesystem');
   if (!fsPlugin || typeof fsPlugin.readFile !== 'function') { return null; }
-  const candidates = getNativeDirCandidates().slice(0, 2);
+  const candidates = getNativeDirCandidates().slice(0, 1);
 
   for (let i = 0; i < candidates.length; i += 1) {
     const cand = candidates[i];
@@ -308,7 +307,7 @@ export async function linkWebBlapDirectory() {
   const picked = await window.showDirectoryPicker({
     id: 'blap-sync-dir',
     mode: 'readwrite',
-    startIn: 'downloads'
+    startIn: 'documents'
   });
   const dirs = await ensureWebBlapDirs(picked);
   await saveStoredWebHandle(dirs.syncHandle);
@@ -364,7 +363,7 @@ export async function writeBlapSyncFile(fileName, content, options) {
       const writable = await fileHandle.createWritable();
       await writable.write(content);
       await writable.close();
-      const displayPath = joinPath('Download/' + BLAP_SYNC_FOLDER, subFolder, fileName);
+      const displayPath = joinPath('Documents/' + BLAP_SYNC_FOLDER, subFolder, fileName);
       return {
         native: false,
         webFs: true,
@@ -405,8 +404,8 @@ export async function readBlapSyncFile(fileName, options) {
       const text = await file.text();
       return {
         text: text,
-        path: joinPath('Download/' + BLAP_SYNC_FOLDER, subFolder, fileName),
-        displayPath: joinPath('Download/' + BLAP_SYNC_FOLDER, subFolder, fileName),
+        path: joinPath('Documents/' + BLAP_SYNC_FOLDER, subFolder, fileName),
+        displayPath: joinPath('Documents/' + BLAP_SYNC_FOLDER, subFolder, fileName),
         webFs: true
       };
     } catch (err) {
