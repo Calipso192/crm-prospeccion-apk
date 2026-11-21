@@ -293,6 +293,8 @@ export async function runSilentCapacitorAutoSync(onComplete) {
     const syncMod = await import('../services/blap-sync-service.js');
     let leadsAdded = 0;
     let patchChanges = 0;
+    let forceBackup = false;
+    let campaignChanged = false;
 
     const leadsFile = await syncMod.readBlapSyncFile(syncMod.LEADS_INBOX_FILENAME);
     if (leadsFile && leadsFile.text) {
@@ -303,6 +305,7 @@ export async function runSilentCapacitorAutoSync(onComplete) {
         const stats = await bulkInsertLeads(parsedList, { defaultCampaignId: tplMod.getActiveCampaignId() });
         leadsAdded = stats.added;
       }
+      await syncMod.archiveBlapSyncFile(syncMod.LEADS_INBOX_FILENAME, leadsFile);
     }
 
     const patchFile = await syncMod.readBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME);
@@ -310,15 +313,27 @@ export async function runSilentCapacitorAutoSync(onComplete) {
       const patchMod = await import('../services/jarvis-patch-service.js');
       const patchRes = await patchMod.applyJarvisPatchPayload(patchFile.text);
       patchChanges = patchRes.totalChanges;
+      forceBackup = Boolean(patchRes.forceBackup);
+      campaignChanged = Boolean(patchRes.campaignChanged);
       await syncMod.archiveBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, patchFile);
     }
 
-    if (leadsAdded > 0 || patchChanges > 0) {
+    if (leadsAdded > 0 || patchChanges > 0 || forceBackup || campaignChanged) {
       if (onComplete) { await onComplete(); }
+      const { getAllLeads } = await import('../services/db-service.js');
+      const dedupeMod = await import('../services/dedupe-index-service.js');
+      const backupMod = await import('../services/backup-service.js');
+      const tplMod = await import('../services/template-service.js');
+      const freshLeads = await getAllLeads();
+      await dedupeMod.downloadDedupeIndexFile(freshLeads, tplMod.getActiveCampaignId());
+      const args = await getExportArgs(freshLeads);
+      await backupMod.downloadBackupFile(...args);
+      resetAutoBackupCounter();
       const parts = [];
       if (leadsAdded > 0) { parts.push(leadsAdded + ' leads nuevos'); }
       if (patchChanges > 0) { parts.push(patchChanges + ' cambios'); }
-      showAppToast('Jarvis sincronizó ' + parts.join(' y '), false);
+      if (forceBackup && parts.length === 0) { parts.push('respaldo actualizado'); }
+      if (parts.length > 0) { showAppToast('Jarvis sincronizó ' + parts.join(' y '), false); }
     }
   } catch (err) {
     /* Sincronización silenciosa: no interrumpir la experiencia si falla lectura */

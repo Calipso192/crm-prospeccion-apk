@@ -9,7 +9,7 @@ import {
   normalizePhone,
   normalizeInstagram
 } from './db-service.js';
-import { getActiveCampaignId, getCampaigns, mergeCampaigns, mergeTemplates } from './template-service.js';
+import { getActiveCampaignId, setActiveCampaign, getCampaigns, mergeCampaigns, mergeTemplates } from './template-service.js';
 import { getInterestTagsCatalog, mergeInterestTagsCatalog } from './phase-engine.js';
 import { mergeChannelStats } from './channel-service.js';
 
@@ -153,12 +153,23 @@ export async function applyJarvisPatchPayload(rawText) {
     throw new Error('El archivo jarvis_crm_patch.json no contiene un JSON válido.');
   }
 
+  let forceBackup = Boolean(parsed && parsed.force_backup === true);
+  let campaignChanged = false;
+  if (parsed && parsed.activeCampaignId && setActiveCampaign(String(parsed.activeCampaignId))) {
+    campaignChanged = true;
+  }
+
   const patchesList = Array.isArray(parsed)
     ? parsed
     : (parsed && Array.isArray(parsed.patches) ? parsed.patches : null);
 
   if (!patchesList && parsed && Array.isArray(parsed.leads)) {
-    return applyStandardBackupFormat(parsed);
+    const res = await applyStandardBackupFormat(parsed);
+    return { ...res, forceBackup, campaignChanged };
+  }
+
+  if (!patchesList && forceBackup) {
+    return { format: 'patches', added: 0, updated: 0, skipped: 0, totalChanges: 0, forceBackup: true, campaignChanged };
   }
 
   if (!patchesList) {
@@ -167,7 +178,6 @@ export async function applyJarvisPatchPayload(rawText) {
 
   const leads = await getAllLeads();
   const lookup = buildLeadLookup(leads);
-  const activeCid = getActiveCampaignId();
   const catalog = getInterestTagsCatalog();
 
   let updated = 0;
@@ -175,12 +185,17 @@ export async function applyJarvisPatchPayload(rawText) {
 
   for (let i = 0; i < patchesList.length; i += 1) {
     const patch = patchesList[i];
+    if (patch && patch.force_backup === true) { forceBackup = true; }
+    if (patch && patch.activeCampaignId && setActiveCampaign(String(patch.activeCampaignId))) {
+      campaignChanged = true;
+    }
     const targetLead = findMatchingLead(patch, lookup);
     if (!targetLead) {
-      skipped += 1;
+      if (!(patch && (patch.force_backup === true || patch.activeCampaignId))) { skipped += 1; }
       continue;
     }
-    const didChange = await applyPatchItem(targetLead, patch, activeCid, catalog);
+    const targetCid = patch.campaignId ? String(patch.campaignId) : getActiveCampaignId();
+    const didChange = await applyPatchItem(targetLead, patch, targetCid, catalog);
     if (didChange) {
       updated += 1;
     } else {
@@ -193,6 +208,8 @@ export async function applyJarvisPatchPayload(rawText) {
     added: 0,
     updated: updated,
     skipped: skipped,
-    totalChanges: updated
+    totalChanges: updated,
+    forceBackup,
+    campaignChanged
   };
 }

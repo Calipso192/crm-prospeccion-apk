@@ -432,25 +432,26 @@ function bindEvents() {
 }
 
 function initCapacitorDeepLinks() {
-  if (typeof window === 'undefined') { return; }
-  if (!(window.Capacitor && window.Capacitor.Plugins)) { return; }
-  const localNotifs = window.Capacitor.Plugins.LocalNotifications;
-  if (localNotifs && typeof localNotifs.addListener === 'function') {
-    localNotifs.addListener('localNotificationActionPerformed', async (event) => {
+  const plugins = typeof window !== 'undefined' && window.Capacitor ? window.Capacitor.Plugins : null;
+  if (!plugins) { return; }
+  if (plugins.App && typeof plugins.App.addListener === 'function') {
+    plugins.App.addListener('appUrlOpen', (ev) => {
+      if (ev && String(ev.url || '').startsWith('crmblap://autosync')) { triggerSilentBlapSync(); }
+    });
+  }
+  if (plugins.LocalNotifications && typeof plugins.LocalNotifications.addListener === 'function') {
+    plugins.LocalNotifications.addListener('localNotificationActionPerformed', async (event) => {
       const leadId = event && event.notification && event.notification.extra ? event.notification.extra.leadId : '';
       if (!leadId) { return; }
-      state.filter = 'todos'; state.queueFilter = '';
-      await switchView('leads');
-      await listRenderer.focusLeadById(leadId);
+      state.filter = 'todos'; state.queueFilter = ''; await switchView('leads'); await listRenderer.focusLeadById(leadId);
     });
   }
 }
 
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
-    if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
-  }
+  if (!('serviceWorker' in navigator)) { return; }
+  const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
 }
 
 async function syncStoredTagLabels() {
