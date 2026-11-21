@@ -404,7 +404,7 @@ function bindEvents() {
     searchTimer = setTimeout(async () => {
       if (state.searchQuery.trim().length > 0 && state.activeView === 'dashboard') { await switchView('leads'); return; }
       await renderActiveView();
-    }, 180);
+    }, 220);
   });
 
   dom.btnClearSearch.addEventListener('click', async () => {
@@ -419,7 +419,12 @@ function bindEvents() {
   document.querySelectorAll('.filter-chip').forEach((chip) => {
     chip.addEventListener('click', async () => { state.filter = chip.dataset.filter; state.queueFilter = ''; await renderActiveView(); });
   });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { showPendingWhatsAppPrompt(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      showPendingWhatsAppPrompt();
+      triggerSilentBlapSync();
+    }
+  });
 }
 
 function initCapacitorDeepLinks() {
@@ -465,6 +470,15 @@ function restorePendingWhatsApp() {
   } catch (error) { return; }
 }
 
+async function triggerSilentBlapSync() {
+  const tools = await import('./modules/modal-tools.js');
+  await tools.runSilentCapacitorAutoSync(async () => {
+    await syncStoredTagLabels();
+    await campaignCtrl.refreshFilterDropdown();
+    await refreshLeads();
+  });
+}
+
 async function initApp() {
   registerServiceWorker();
   bindEvents();
@@ -475,6 +489,7 @@ async function initApp() {
   await campaignCtrl.refreshFilterDropdown();
   await refreshLeads();
   restorePendingWhatsApp();
+  await triggerSilentBlapSync();
 }
 
 initApp();

@@ -454,21 +454,35 @@
       </div>
       <p id="backup-feedback" class="backup-feedback hidden"></p>
       <div class="new-template-box">
-        <h4>Copia de Seguridad (JSON)</h4>
-        <p class="helper-hint">Exporta o comparte tus contactos, campañas y plantillas, o restaura un respaldo v2/v3/v4 sin perder tus datos.</p>
+        <h4>Copia de Seguridad y BLAP-Sync (JSON)</h4>
+        <p class="helper-hint">Exporta respaldos en Download/BLAP-Sync/respaldos/ y el índice en Download/BLAP-Sync/crm_blap_index.json.</p>
         <div class="backup-btn-row">
           <button id="btn-export-backup" class="btn-primary" type="button">Descargar JSON</button>
           <button id="btn-share-backup" class="btn-secondary" type="button">Compartir</button>
         </div>
         <button id="btn-copy-backup" class="btn-secondary btn-full" type="button">Copiar JSON</button>
+        <button id="btn-export-dedupe-index" class="btn-secondary btn-full" type="button">Índice BLAP-Sync (crm_blap_index.json)</button>
+        <button id="btn-link-blap-folder" class="btn-secondary btn-full" type="button">Vincular Carpeta Download/BLAP-Sync (Web)</button>
         <div class="field-group">
           <label for="input-import-backup">Restaurar y fusionar desde JSON</label>
           <input type="file" id="input-import-backup" accept=".json,application/json">
         </div>
       </div>
       <div class="new-template-box">
-        <h4>Importar Lote Diario por Texto</h4>
-        <p class="helper-hint">Pega contactos (uno por línea): Nombre - 9XXXXXXXX, Nombre - @usuario o Nombre - 9XXXXXXXX - @usuario.</p>
+        <h4>Buzón de Entrada y Parches Jarvis</h4>
+        <p class="helper-hint">Lee automáticamente desde Download/BLAP-Sync/ o carga manualmente un archivo JSON.</p>
+        <div class="backup-btn-row">
+          <button id="btn-sync-blap-leads" class="btn-primary" type="button">Leer leads_nuevos_ia.json</button>
+          <button id="btn-sync-jarvis-patch" class="btn-secondary" type="button">Aplicar jarvis_crm_patch.json</button>
+        </div>
+        <div class="field-group">
+          <label for="input-import-night-batch">Cargar Lote Nocturno manual (.json)</label>
+          <input type="file" id="input-import-night-batch" accept=".json,application/json">
+        </div>
+        <div class="field-group">
+          <label for="input-import-jarvis-patch">Cargar Parche Jarvis manual (.json)</label>
+          <input type="file" id="input-import-jarvis-patch" accept=".json,application/json">
+        </div>
         <div class="field-group">
           <label for="bulk-default-rubro">Rubro para este lote (opcional)</label>
           <select id="bulk-default-rubro">
@@ -481,8 +495,8 @@
           </select>
         </div>
         <div class="field-group">
-          <label for="bulk-leads-text">Lista de prospectos</label>
-          <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321&#10;Barbería VIP - @barberia_vip&#10;Vet Patitas - 912345678 - @vet.patitas"></textarea>
+          <label for="bulk-leads-text">Lista de prospectos o JSON</label>
+          <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321 | Canal: WA | Nota: Sin web&#10;Barbería VIP - @barberia_vip | Canal: IG&#10;Vet Patitas - 912345678 - @vet.patitas"></textarea>
         </div>
         <button id="btn-import-bulk" class="btn-whatsapp btn-full" type="button">Agregar Contactos Nuevos</button>
       </div>

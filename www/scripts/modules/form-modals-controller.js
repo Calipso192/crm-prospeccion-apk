@@ -257,6 +257,49 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       await tools.copyBackupJson(getExportList(), dom.backupFeedback);
       await callbacks.onRenderActiveView();
     });
+    $('btn-export-dedupe-index').addEventListener('click', async () => {
+      const tools = await import('./modal-tools.js');
+      await tools.exportDedupeIndexJson(getExportList(), dom.backupFeedback);
+    });
+    $('btn-link-blap-folder').addEventListener('click', async () => {
+      const tools = await import('./modal-tools.js');
+      await tools.linkWebBlapSyncFolder(dom.backupFeedback);
+    });
+    $('btn-sync-blap-leads').addEventListener('click', async () => {
+      if (isCampaignClosed()) {
+        showFeedback(dom.backupFeedback, 'La campaña activa está cerrada. Reábrela para importar contactos.');
+        return;
+      }
+      const tools = await import('./modal-tools.js');
+      await tools.syncNightBatchFromBlap(dom.bulkDefaultRubro, dom.backupFeedback, callbacks.onRefreshLeads);
+    });
+    $('btn-sync-jarvis-patch').addEventListener('click', async () => {
+      const tools = await import('./modal-tools.js');
+      await tools.applyJarvisPatchFromBlap(dom.backupFeedback, async () => {
+        await callbacks.onSyncTagLabels();
+        await campaignCtrl.refreshFilterDropdown();
+        await callbacks.onRefreshLeads();
+      });
+    });
+    $('input-import-jarvis-patch').addEventListener('change', async (ev) => {
+      const tools = await import('./modal-tools.js');
+      await tools.importJarvisPatchFile(ev.target.files ? ev.target.files[0] : null, dom.backupFeedback, async () => {
+        await callbacks.onSyncTagLabels();
+        await campaignCtrl.refreshFilterDropdown();
+        await callbacks.onRefreshLeads();
+      });
+      ev.target.value = '';
+    });
+    $('input-import-night-batch').addEventListener('change', async (ev) => {
+      if (isCampaignClosed()) {
+        showFeedback(dom.backupFeedback, 'La campaña activa está cerrada. Reábrela para importar contactos.');
+        ev.target.value = '';
+        return;
+      }
+      const tools = await import('./modal-tools.js');
+      await tools.importNightBatchJson(ev.target.files ? ev.target.files[0] : null, dom.bulkDefaultRubro, dom.backupFeedback, callbacks.onRefreshLeads);
+      ev.target.value = '';
+    });
     $('input-import-backup').addEventListener('change', async (ev) => {
       const tools = await import('./modal-tools.js');
       await tools.importBackupJson(ev.target.files ? ev.target.files[0] : null, dom.backupFeedback, async () => {

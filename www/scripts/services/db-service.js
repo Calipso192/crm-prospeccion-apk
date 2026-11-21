@@ -31,9 +31,21 @@ function findMatchingMaster(list, cleanPhone, cleanIg, excludeId) {
 }
 
 function registerInMaps(item, byPhone, byIg, byId) {
-  if (item.phone) { byPhone.set(item.phone, item); }
+  if (item.phone) {
+    byPhone.set(item.phone, item);
+    if (item.phone.length === 11 && item.phone.startsWith('51')) { byPhone.set(item.phone.slice(2), item); }
+  }
   if (item.instagram) { byIg.set(item.instagram, item); }
-  if (item.id) { byId.set(item.id, item); }
+  if (item.id && byId) { byId.set(item.id, item); }
+}
+
+function findInMaps(byPhone, byIg, cleanPhone, cleanIg) {
+  if (cleanPhone) {
+    const direct = byPhone.get(cleanPhone);
+    if (direct) { return direct; }
+    if (cleanPhone.length === 11 && cleanPhone.startsWith('51')) { return byPhone.get(cleanPhone.slice(2)) || null; }
+  }
+  return cleanIg ? byIg.get(cleanIg) : null;
 }
 
 async function _mergeImportedLeadsCore(incomingLeads, options) {
@@ -142,7 +154,7 @@ export async function migrateDatabaseToV4(activeCampaignId) {
     const rawRecords = await readAllRawFromDb();
     if (rawRecords.length === 0) {
       const meta = getAutoBackupMeta();
-      if (!meta.explicitlyEmpty && !meta.mirrorQuotaExceeded) {
+      if (!meta.explicitlyEmpty && !meta.mirrorQuotaExceeded && !meta.mirrorDisabledForScale) {
         const mirrorRecords = readMirrorSnapshot(targetCid);
         if (mirrorRecords.length > 0) {
           await _mergeImportedLeadsCore(mirrorRecords, { defaultCampaignId: targetCid, skipIncrementChanges: true, forceFallbackForLegacy: true });
@@ -246,11 +258,7 @@ export function saveLead(leadData, options) {
           return;
         }
 
-        const fresh = createFreshMaster(
-          leadData.name.trim(), cleanPhone, cleanIg,
-          leadData.rubro ? leadData.rubro : '', baseNotesVal ? baseNotesVal : '',
-          targetCid, newState, now
-        );
+        const fresh = createFreshMaster(leadData.name.trim(), cleanPhone, cleanIg, leadData.rubro ? leadData.rubro : '', baseNotesVal ? baseNotesVal : '', targetCid, newState, now);
         store.put(fresh);
         setResult(fresh);
       };
@@ -267,7 +275,9 @@ export function bulkInsertLeads(leadsList, options) {
   return enqueueWrite(async () => {
     const stats = await runTx('readwrite', (store, setResult) => {
       store.getAll().onsuccess = (ev) => {
-        const allMaster = (Array.isArray(ev.target.result) ? ev.target.result : []).map((x) => normalizeMasterRecord(x, campaignId));
+        const byPhone = new Map();
+        const byIg = new Map();
+        (Array.isArray(ev.target.result) ? ev.target.result : []).map((x) => normalizeMasterRecord(x, campaignId)).forEach((item) => registerInMaps(item, byPhone, byIg, null));
         const now = Date.now();
         let added = 0;
         let skipped = 0;
@@ -276,22 +286,22 @@ export function bulkInsertLeads(leadsList, options) {
           const cleanIg = normalizeInstagram(raw && raw.instagram);
           const cleanName = raw && raw.name ? String(raw.name).trim() : '';
           if (!(cleanName && hasValidChannel(cleanPhone, cleanIg))) { return; }
-          const match = findMatchingMaster(allMaster, cleanPhone, cleanIg, null);
+          const suggestedChan = normalizeChannel(raw && (raw.channelUsed ? raw.channelUsed : raw.channel));
+          const initialState = createDefaultCampaignState('nuevo', now);
+          if (suggestedChan) { initialState.channelUsed = suggestedChan; }
+          const cleanNotes = raw && raw.baseNotes ? String(raw.baseNotes).trim() : '';
+          const match = findInMaps(byPhone, byIg, cleanPhone, cleanIg);
           if (match) {
             if (match.campaignStates && match.campaignStates[campaignId]) { skipped += 1; return; }
-            const enrolled = enrollIntoExistingMaster(match, campaignId, createDefaultCampaignState('nuevo', now), cleanPhone, cleanIg, raw.rubro, raw.baseNotes, now);
+            const enrolled = enrollIntoExistingMaster(match, campaignId, initialState, cleanPhone, cleanIg, raw.rubro, cleanNotes, now);
             store.put(enrolled);
+            registerInMaps(enrolled, byPhone, byIg, null);
             added += 1;
             return;
           }
-          const fresh = createFreshMaster(
-            cleanName, cleanPhone, cleanIg,
-            raw.rubro ? String(raw.rubro).trim().toLowerCase() : '',
-            raw.baseNotes ? String(raw.baseNotes).trim() : '',
-            campaignId, createDefaultCampaignState('nuevo', now), now, idx
-          );
+          const fresh = createFreshMaster(cleanName, cleanPhone, cleanIg, raw.rubro ? String(raw.rubro).trim().toLowerCase() : '', cleanNotes, campaignId, initialState, now, idx);
           store.put(fresh);
-          allMaster.push(fresh);
+          registerInMaps(fresh, byPhone, byIg, null);
           added += 1;
         });
         setResult({ added, skipped });

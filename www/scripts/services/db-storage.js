@@ -7,6 +7,7 @@ const DB_VERSION = 4;
 const MIRROR_KEY = 'crm_prospeccion_leads_mirror_v4';
 const LEGACY_MIRROR_KEY = 'crm_prospeccion_leads_mirror_v2';
 const BACKUP_META_KEY = 'crm_prospeccion_backup_meta_v2';
+const MIRROR_MAX_RECORDS = 250;
 
 let dbConnectionPromise = null;
 let writeQueue = Promise.resolve();
@@ -28,6 +29,8 @@ function defaultBackupMeta() {
     lastAutoBackupAt: 0,
     lastExportAt: 0,
     mirrorQuotaExceeded: mirrorQuotaExceededMem,
+    mirrorDisabledForScale: false,
+    totalCount: 0,
     explicitlyEmpty: false
   };
 }
@@ -42,6 +45,8 @@ export function getAutoBackupMeta() {
       lastAutoBackupAt: Number(p.lastAutoBackupAt) > 0 ? Number(p.lastAutoBackupAt) : 0,
       lastExportAt: Number(p.lastExportAt) > 0 ? Number(p.lastExportAt) : 0,
       mirrorQuotaExceeded: Boolean(p.mirrorQuotaExceeded ? true : mirrorQuotaExceededMem),
+      mirrorDisabledForScale: Boolean(p.mirrorDisabledForScale),
+      totalCount: Number(p.totalCount) > 0 ? Number(p.totalCount) : 0,
       explicitlyEmpty: Boolean(p.explicitlyEmpty)
     };
   } catch (error) {
@@ -71,18 +76,33 @@ export function syncMirrorSnapshot(records, incrementChanges) {
   const nextChanges = incrementChanges ? meta.changesSinceExport + 1 : meta.changesSinceExport;
   let quotaFailed = false;
   let nextAutoAt = meta.lastAutoBackupAt;
-  try {
-    localStorage.setItem(MIRROR_KEY, JSON.stringify(records));
+  const scaleMode = records.length > MIRROR_MAX_RECORDS;
+
+  if (scaleMode) {
+    try {
+      localStorage.removeItem(MIRROR_KEY);
+      localStorage.removeItem(LEGACY_MIRROR_KEY);
+    } catch (e) {
+      /* Ignorar si localStorage no está disponible */
+    }
     nextAutoAt = Date.now();
-  } catch (error) {
-    quotaFailed = true;
+  } else {
+    try {
+      localStorage.setItem(MIRROR_KEY, JSON.stringify(records));
+      nextAutoAt = Date.now();
+    } catch (error) {
+      quotaFailed = true;
+    }
   }
+
   mirrorQuotaExceededMem = quotaFailed;
   writeBackupMeta({
     changesSinceExport: nextChanges,
     lastAutoBackupAt: nextAutoAt,
     lastExportAt: meta.lastExportAt,
     mirrorQuotaExceeded: quotaFailed,
+    mirrorDisabledForScale: scaleMode,
+    totalCount: records.length,
     explicitlyEmpty: records.length === 0
   });
 }

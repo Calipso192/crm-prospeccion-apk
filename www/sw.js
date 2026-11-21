@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v9';
+const CACHE_NAME = 'crm-prospeccion-v11';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -17,6 +17,10 @@ const ASSETS_TO_CACHE = [
   './scripts/services/channel-service.js',
   './scripts/services/template-service.js',
   './scripts/services/reminder-service.js',
+  './scripts/services/bulk-parser.js',
+  './scripts/services/dedupe-index-service.js',
+  './scripts/services/blap-sync-service.js',
+  './scripts/services/jarvis-patch-service.js',
   './scripts/services/backup-service.js',
   './scripts/modules/dashboard-view.js',
   './scripts/modules/lead-card.js',

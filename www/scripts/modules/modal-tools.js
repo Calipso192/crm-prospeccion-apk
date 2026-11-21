@@ -62,8 +62,8 @@ export async function exportBackupJson(leads, feedbackEl) {
     const res = await backupMod.downloadBackupFile(...args);
     resetAutoBackupCounter();
     const loc = res && res.displayPath ? res.displayPath : (res && res.fileName ? res.fileName : 'respaldo.json');
-    const prefix = res && res.usedFallback
-      ? 'Respaldo guardado en Cache (Documentos restringido): '
+    const prefix = res && res.native && res.usedFallback
+      ? 'Respaldo guardado en ruta alterna: '
       : 'Respaldo guardado en: ';
     showModalFeedback(feedbackEl, prefix + loc, false);
   } catch (error) {
@@ -149,15 +149,50 @@ export async function importBackupJson(file, feedbackEl, onComplete) {
   }
 }
 
+export async function exportDedupeIndexJson(leads, feedbackEl) {
+  try {
+    const dedupeMod = await import('../services/dedupe-index-service.js');
+    const tplMod = await import('../services/template-service.js');
+    const res = await dedupeMod.downloadDedupeIndexFile(leads, tplMod.getActiveCampaignId());
+    const loc = res && res.displayPath ? res.displayPath : 'crm_blap_index.json';
+    showModalFeedback(feedbackEl, 'Índice Termux exportado (' + res.count + ' contactos): ' + loc, false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al exportar índice.', true);
+  }
+}
+
+export async function importNightBatchJson(file, rubroSelectEl, feedbackEl, onComplete) {
+  if (!file) { return; }
+  try {
+    const rawText = await file.text();
+    const parserMod = await import('../services/bulk-parser.js');
+    const tplMod = await import('../services/template-service.js');
+    const defaultRubro = rubroSelectEl ? rubroSelectEl.value : '';
+    const parsedList = parserMod.parseNightBatchJson(rawText, defaultRubro);
+    if (parsedList.length === 0) {
+      showModalFeedback(feedbackEl, 'El archivo JSON no contiene prospectos válidos.', true);
+      return;
+    }
+    const stats = await bulkInsertLeads(parsedList, {
+      defaultCampaignId: tplMod.getActiveCampaignId()
+    });
+    if (onComplete) { await onComplete(); }
+    const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' duplicados omitidos).' : '.';
+    showModalFeedback(feedbackEl, 'Buzón nocturno: ' + stats.added + ' prospectos agregados' + extra, false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al leer el lote JSON.', true);
+  }
+}
+
 export async function importBulkLeads(textareaEl, rubroSelectEl, feedbackEl, onComplete) {
-  const backupMod = await import('../services/backup-service.js');
+  const parserMod = await import('../services/bulk-parser.js');
   const tplMod = await import('../services/template-service.js');
   const defaultRubro = rubroSelectEl ? rubroSelectEl.value : '';
-  const parsedList = backupMod.parseBulkLeadsText(textareaEl.value, defaultRubro);
+  const parsedList = parserMod.parseBulkLeadsText(textareaEl.value, defaultRubro);
   if (parsedList.length === 0) {
     showModalFeedback(
       feedbackEl,
-      'No se detectaron contactos válidos. Usa: Nombre - 9XXXXXXXX, Nombre - @usuario o Nombre - 9XXXXXXXX - @usuario',
+      'No se detectaron contactos válidos. Usa: Nombre - 9XXXXXXXX - @usuario | Canal: WA | Nota: ...',
       true
     );
     return;
@@ -171,4 +206,124 @@ export async function importBulkLeads(textareaEl, rubroSelectEl, feedbackEl, onC
   }
   const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' ya existentes omitidos).' : '.';
   showModalFeedback(feedbackEl, 'Se agregaron ' + stats.added + ' prospectos a esta campaña' + extra, false);
+}
+
+export async function linkWebBlapSyncFolder(feedbackEl) {
+  try {
+    const syncMod = await import('../services/blap-sync-service.js');
+    await syncMod.linkWebBlapDirectory();
+    showModalFeedback(feedbackEl, 'Carpeta Download/BLAP-Sync/ y respaldos/ vinculada correctamente.', false);
+  } catch (error) {
+    if (error && error.name === 'AbortError') { return; }
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'No se pudo vincular la carpeta.', true);
+  }
+}
+
+export async function syncNightBatchFromBlap(rubroSelectEl, feedbackEl, onComplete) {
+  try {
+    const syncMod = await import('../services/blap-sync-service.js');
+    const fileRes = await syncMod.readBlapSyncFile(syncMod.LEADS_INBOX_FILENAME, { promptIfMissing: true });
+    if (!fileRes || !fileRes.text) {
+      showModalFeedback(feedbackEl, 'No se encontró Download/BLAP-Sync/' + syncMod.LEADS_INBOX_FILENAME + '.', true);
+      return;
+    }
+    const parserMod = await import('../services/bulk-parser.js');
+    const tplMod = await import('../services/template-service.js');
+    const defaultRubro = rubroSelectEl ? rubroSelectEl.value : '';
+    const parsedList = parserMod.parseNightBatchJson(fileRes.text, defaultRubro);
+    if (parsedList.length === 0) {
+      showModalFeedback(feedbackEl, 'El archivo leads_nuevos_ia.json no contiene prospectos válidos.', true);
+      return;
+    }
+    const stats = await bulkInsertLeads(parsedList, { defaultCampaignId: tplMod.getActiveCampaignId() });
+    if (onComplete) { await onComplete(); }
+    const extra = stats.skipped > 0 ? ' (' + stats.skipped + ' duplicados omitidos).' : '.';
+    showModalFeedback(feedbackEl, 'BLAP-Sync: ' + stats.added + ' prospectos agregados' + extra, false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al sincronizar leads_nuevos_ia.json.', true);
+  }
+}
+
+async function processJarvisPatchText(rawText, onComplete) {
+  const patchMod = await import('../services/jarvis-patch-service.js');
+  const res = await patchMod.applyJarvisPatchPayload(rawText);
+  if (res.totalChanges > 0 && onComplete) {
+    await onComplete();
+  }
+  return res;
+}
+
+export async function applyJarvisPatchFromBlap(feedbackEl, onComplete) {
+  try {
+    const syncMod = await import('../services/blap-sync-service.js');
+    const fileRes = await syncMod.readBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, { promptIfMissing: true });
+    if (!fileRes || !fileRes.text) {
+      showModalFeedback(feedbackEl, 'No se encontró Download/BLAP-Sync/' + syncMod.JARVIS_PATCH_FILENAME + '.', true);
+      return;
+    }
+    const res = await processJarvisPatchText(fileRes.text, onComplete);
+    await syncMod.archiveBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, fileRes);
+    showModalFeedback(feedbackEl, 'Parche Jarvis aplicado: ' + res.totalChanges + ' cambios (' + res.skipped + ' omitidos).', false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al aplicar jarvis_crm_patch.json.', true);
+  }
+}
+
+export async function importJarvisPatchFile(file, feedbackEl, onComplete) {
+  if (!file) { return; }
+  try {
+    const rawText = await file.text();
+    const res = await processJarvisPatchText(rawText, onComplete);
+    showModalFeedback(feedbackEl, 'Parche Jarvis aplicado: ' + res.totalChanges + ' cambios (' + res.skipped + ' omitidos).', false);
+  } catch (error) {
+    showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al leer el parche JSON.', true);
+  }
+}
+
+let autoSyncRunning = false;
+let lastAutoSyncAt = 0;
+
+export async function runSilentCapacitorAutoSync(onComplete) {
+  if (autoSyncRunning || (Date.now() - lastAutoSyncAt) < 3000) { return; }
+  const waMod = await import('../services/whatsapp-service.js');
+  if (!waMod.isCapacitorNative()) { return; }
+
+  autoSyncRunning = true;
+  try {
+    const syncMod = await import('../services/blap-sync-service.js');
+    let leadsAdded = 0;
+    let patchChanges = 0;
+
+    const leadsFile = await syncMod.readBlapSyncFile(syncMod.LEADS_INBOX_FILENAME);
+    if (leadsFile && leadsFile.text) {
+      const parserMod = await import('../services/bulk-parser.js');
+      const tplMod = await import('../services/template-service.js');
+      const parsedList = parserMod.parseNightBatchJson(leadsFile.text, '');
+      if (parsedList.length > 0) {
+        const stats = await bulkInsertLeads(parsedList, { defaultCampaignId: tplMod.getActiveCampaignId() });
+        leadsAdded = stats.added;
+      }
+    }
+
+    const patchFile = await syncMod.readBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME);
+    if (patchFile && patchFile.text) {
+      const patchMod = await import('../services/jarvis-patch-service.js');
+      const patchRes = await patchMod.applyJarvisPatchPayload(patchFile.text);
+      patchChanges = patchRes.totalChanges;
+      await syncMod.archiveBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, patchFile);
+    }
+
+    if (leadsAdded > 0 || patchChanges > 0) {
+      if (onComplete) { await onComplete(); }
+      const parts = [];
+      if (leadsAdded > 0) { parts.push(leadsAdded + ' leads nuevos'); }
+      if (patchChanges > 0) { parts.push(patchChanges + ' cambios'); }
+      showAppToast('Jarvis sincronizó ' + parts.join(' y '), false);
+    }
+  } catch (err) {
+    /* Sincronización silenciosa: no interrumpir la experiencia si falla lectura */
+  } finally {
+    lastAutoSyncAt = Date.now();
+    autoSyncRunning = false;
+  }
 }
