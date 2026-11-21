@@ -127,6 +127,7 @@ export function createDefaultCampaignState(stage, now) {
     quickNotes: [],
     reminderAt: '',
     reminderReason: '',
+    suggestedMessage: '',
     saleAmount: 0,
     lastContactAt: ts,
     updatedAt: ts
@@ -149,6 +150,7 @@ export function normalizeCampaignState(rawState, fallbackNow) {
     quickNotes: normalizeQuickNotes(src.quickNotes),
     reminderAt: src.reminderAt ? String(src.reminderAt).trim() : '',
     reminderReason: src.reminderReason ? String(src.reminderReason).trim() : '',
+    suggestedMessage: src.suggestedMessage ? String(src.suggestedMessage).trim() : '',
     saleAmount: cleanStage === 'vendido' ? parseSaleAmount(src.saleAmount) : 0,
     lastContactAt: computeLastContactAt({ lastContactAt: src.lastContactAt, updatedAt: updatedAt }, sentTags),
     updatedAt: updatedAt
@@ -322,6 +324,7 @@ export function projectLeadForCampaign(masterLead, campaignId, campaignsById) {
     quickNotes: Array.isArray(campState.quickNotes) ? campState.quickNotes.slice() : [],
     reminderAt: campState.reminderAt,
     reminderReason: campState.reminderReason,
+    suggestedMessage: campState.suggestedMessage ? campState.suggestedMessage : '',
     saleAmount: parseSaleAmount(campState.saleAmount),
     lastContactAt: campState.lastContactAt,
     updatedAt: campState.updatedAt,
@@ -403,6 +406,7 @@ function mergeSingleCampaignState(curState, incState) {
     saleAmount: primary.stage === 'vendido' ? (primary.saleAmount > 0 ? primary.saleAmount : secondary.saleAmount) : 0,
     reminderAt: primary.reminderAt,
     reminderReason: primary.reminderReason,
+    suggestedMessage: primary.suggestedMessage ? primary.suggestedMessage : secondary.suggestedMessage,
     sentTags: mergedSentTags,
     interestTags: mergedInterest,
     quickNotes: mergeQuickNotes(primary.quickNotes, secondary.quickNotes),

@@ -89,6 +89,22 @@ export function openInstagramProfile(lead) {
   return openExternalTarget('https://instagram.com/' + encodeURIComponent(handle));
 }
 
+export async function copySuggestedMessage(lead) {
+  const msg = lead && lead.suggestedMessage ? String(lead.suggestedMessage).trim() : '';
+  if (!msg) {
+    return false;
+  }
+  try {
+    if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(msg);
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 export function openPhoneCall(lead) {
   const cleanPhone = sanitizePhone(lead && lead.phone);
   if (!cleanPhone) {

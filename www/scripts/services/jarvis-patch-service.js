@@ -4,6 +4,7 @@ import {
   updateLeadCampaignStage,
   toggleInterestTag,
   updateLeadReminder,
+  updateLeadSuggestedMessage,
   addQuickNoteToLead,
   normalizePhone,
   normalizeInstagram
@@ -123,6 +124,11 @@ async function applyPatchItem(lead, patch, activeCid, catalog) {
     const nextAt = patch.reminderAt !== undefined ? patch.reminderAt : (cs ? cs.reminderAt : '');
     const nextReason = patch.reminderReason !== undefined ? patch.reminderReason : (cs ? cs.reminderReason : '');
     await updateLeadReminder(lead.id, activeCid, nextAt, nextReason);
+    modified = true;
+  }
+
+  if (patch.suggestedMessage !== undefined) {
+    await updateLeadSuggestedMessage(lead.id, activeCid, patch.suggestedMessage);
     modified = true;
   }
 

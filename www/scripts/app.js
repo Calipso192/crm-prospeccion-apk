@@ -141,19 +141,18 @@ const listRenderer = createListRenderer({ leadsList: dom.leadsList }, state, (wa
   onPickRubro: withMutable((lead) => selectionCtrl.openSingleRubroPicker(lead)),
   onQuickStatus: withMutable((lead) => modalsCtrl.openQuickStatusModal(lead)),
   onWhatsApp: (lead) => openTemplatePicker(lead),
-  onInstagram: (lead) => runChannelTouch(lead, 'instagram', waMod.openInstagramProfile, 'Instagram DM abierto'),
+  onInstagram: async (lead) => {
+    const copied = await waMod.copySuggestedMessage(lead);
+    runChannelTouch(lead, 'instagram', waMod.openInstagramProfile, copied ? 'Mensaje Jarvis copiado · Instagram DM' : 'Instagram DM abierto');
+  },
   onCall: (lead) => runChannelTouch(lead, 'llamada', waMod.openPhoneCall, 'Llamada iniciada'),
   onSearch: (lead) => waMod.searchProspectOnline(lead),
   onOpenReminderModal: withMutable((lead) => modalsCtrl.openReminderModalForLead(lead)),
   onTriageHuman: withMutable(async (lead) => {
-    await applyLeadTriageOutcome(lead.id, lead.campaignId, 'seguimiento', false);
-    await refreshLeads();
-    showAppToast(lead.name + ' pasó a Seguimiento', false);
+    await applyLeadTriageOutcome(lead.id, lead.campaignId, 'seguimiento', false); await refreshLeads(); showAppToast(lead.name + ' pasó a Seguimiento', false);
   }),
   onTriageDiscard: withMutable(async (lead, isMetaBot) => {
-    await applyLeadTriageOutcome(lead.id, lead.campaignId, 'descartado', isMetaBot);
-    await refreshLeads();
-    showAppToast(lead.name + ' descartado' + (isMetaBot ? ' (marcado Bot Meta)' : ''), false);
+    await applyLeadTriageOutcome(lead.id, lead.campaignId, 'descartado', isMetaBot); await refreshLeads(); showAppToast(lead.name + ' descartado' + (isMetaBot ? ' (marcado Bot Meta)' : ''), false);
   }),
   onToggleInterestTag: withMutable(async (lead, tagObj) => {
     await toggleInterestTag(lead.id, lead.campaignId, tagObj);
@@ -360,6 +359,13 @@ async function openTemplatePicker(lead) {
   renderPickerWaLines();
   dom.pickerButtonsList.innerHTML = '';
 
+  if (lead.suggestedMessage) {
+    const jBtn = document.createElement('button');
+    jBtn.type = 'button'; jBtn.className = 'btn-whatsapp'; jBtn.textContent = 'Mensaje Jarvis Listo';
+    jBtn.addEventListener('click', () => launchWhatsAppWithText(lead, lead.suggestedMessage, null));
+    dom.pickerButtonsList.appendChild(jBtn);
+  }
+
   const tplModule = await import('./services/template-service.js');
   const templates = tplModule.getTemplates().slice().sort((a, b) => {
     const scoreA = (a.phase === phaseInfo.suggestedPhase ? 2 : 0) + (a.rubro && a.rubro === lead.rubro ? 1 : 0);
@@ -376,9 +382,7 @@ async function openTemplatePicker(lead) {
   } else {
     eligible.forEach((tpl) => {
       const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary';
-      btn.textContent = tpl.label;
+      btn.type = 'button'; btn.className = tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary'; btn.textContent = tpl.label;
       btn.addEventListener('click', () => launchWhatsAppWithText(lead, tplModule.renderTemplateText(tpl.text, lead), tpl));
       dom.pickerButtonsList.appendChild(btn);
     });

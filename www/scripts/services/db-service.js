@@ -409,9 +409,12 @@ export function removeQuickNoteFromLead(leadId, campaignId, noteId) {
 
 export function updateLeadReminder(leadId, campaignId, reminderAt, reminderReason) {
   return updateCampaignState(leadId, campaignId, (cs) => {
-    cs.reminderAt = reminderAt ? String(reminderAt).trim() : '';
-    cs.reminderReason = reminderReason ? String(reminderReason).trim() : '';
+    cs.reminderAt = reminderAt ? String(reminderAt).trim() : ''; cs.reminderReason = reminderReason ? String(reminderReason).trim() : '';
   });
+}
+
+export function updateLeadSuggestedMessage(leadId, campaignId, msg) {
+  return updateCampaignState(leadId, campaignId, (cs) => { cs.suggestedMessage = msg ? String(msg).trim() : ''; });
 }
 
 function renameTagsInStates(listKey, tagIdMap, options) {
@@ -490,9 +493,5 @@ export function mergeImportedLeads(incomingLeads, options) {
 }
 
 export function deleteLead(id) {
-  return enqueueWrite(async () => {
-    await runTx('readwrite', (store) => { store.delete(id); });
-    await refreshMirrorFromDb(true);
-    return true;
-  });
+  return enqueueWrite(async () => { await runTx('readwrite', (store) => { store.delete(id); }); await refreshMirrorFromDb(true); return true; });
 }
