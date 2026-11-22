@@ -212,7 +212,7 @@ export async function linkWebBlapSyncFolder(feedbackEl) {
   try {
     const syncMod = await import('../services/blap-sync-service.js');
     await syncMod.linkWebBlapDirectory();
-    showModalFeedback(feedbackEl, 'Carpeta Download/BLAP-Sync/ y respaldos/ vinculada correctamente.', false);
+    showModalFeedback(feedbackEl, 'Carpeta Documents/BLAP-Sync/ y respaldos/ vinculada correctamente.', false);
   } catch (error) {
     if (error && error.name === 'AbortError') { return; }
     showModalFeedback(feedbackEl, error && error.message ? error.message : 'No se pudo vincular la carpeta.', true);
@@ -224,7 +224,7 @@ export async function syncNightBatchFromBlap(rubroSelectEl, feedbackEl, onComple
     const syncMod = await import('../services/blap-sync-service.js');
     const fileRes = await syncMod.readBlapSyncFile(syncMod.LEADS_INBOX_FILENAME, { promptIfMissing: true });
     if (!fileRes || !fileRes.text) {
-      showModalFeedback(feedbackEl, 'No se encontró Download/BLAP-Sync/' + syncMod.LEADS_INBOX_FILENAME + '.', true);
+      showModalFeedback(feedbackEl, 'No se encontró Documents/BLAP-Sync/' + syncMod.LEADS_INBOX_FILENAME + '.', true);
       return;
     }
     const parserMod = await import('../services/bulk-parser.js');
@@ -257,13 +257,17 @@ export async function applyJarvisPatchFromBlap(feedbackEl, onComplete) {
   try {
     const syncMod = await import('../services/blap-sync-service.js');
     const fileRes = await syncMod.readBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, { promptIfMissing: true });
+    if (fileRes && fileRes.permissionError) {
+      showModalFeedback(feedbackEl, 'Sin permiso en Android para leer BLAP-Sync. Activa "Acceso a todos los archivos" para CRM BLAP en Ajustes.', true);
+      return;
+    }
     if (!fileRes || !fileRes.text) {
-      showModalFeedback(feedbackEl, 'No se encontró Download/BLAP-Sync/' + syncMod.JARVIS_PATCH_FILENAME + '.', true);
+      showModalFeedback(feedbackEl, 'No se encontró Documents/BLAP-Sync/' + syncMod.JARVIS_PATCH_FILENAME + '.', true);
       return;
     }
     const res = await processJarvisPatchText(fileRes.text, onComplete);
     await syncMod.archiveBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, fileRes);
-    showModalFeedback(feedbackEl, 'Parche Jarvis aplicado: ' + res.totalChanges + ' cambios (' + res.skipped + ' omitidos).', false);
+    showModalFeedback(feedbackEl, 'Parche Jarvis aplicado: ' + formatPatchSummary(res) + ' (' + res.skipped + ' omitidos).', false);
   } catch (error) {
     showModalFeedback(feedbackEl, error && error.message ? error.message : 'Error al aplicar jarvis_crm_patch.json.', true);
   }
@@ -282,6 +286,16 @@ export async function importJarvisPatchFile(file, feedbackEl, onComplete) {
 
 let autoSyncRunning = false;
 let lastAutoSyncAt = 0;
+let permissionToastShown = false;
+
+function formatPatchSummary(res) {
+  const parts = [];
+  if (res.added > 0) { parts.push(res.added + ' nuevos'); }
+  if (res.updated > 0) { parts.push(res.updated + ' actualizados'); }
+  if (res.discarded > 0) { parts.push(res.discarded + ' descartados'); }
+  if (parts.length === 0) { return res.totalChanges + ' cambios'; }
+  return parts.join(', ');
+}
 
 export async function runSilentCapacitorAutoSync(onComplete) {
   if (autoSyncRunning || (Date.now() - lastAutoSyncAt) < 3000) { return; }
@@ -293,10 +307,18 @@ export async function runSilentCapacitorAutoSync(onComplete) {
     const syncMod = await import('../services/blap-sync-service.js');
     let leadsAdded = 0;
     let patchChanges = 0;
+    let patchDiscarded = 0;
     let forceBackup = false;
     let campaignChanged = false;
 
     const leadsFile = await syncMod.readBlapSyncFile(syncMod.LEADS_INBOX_FILENAME);
+    if (leadsFile && leadsFile.permissionError) {
+      if (!permissionToastShown) {
+        permissionToastShown = true;
+        showAppToast('Sin permiso en BLAP-Sync. Activa "Acceso a todos los archivos" para CRM BLAP en Ajustes.', true);
+      }
+      return;
+    }
     if (leadsFile && leadsFile.text) {
       const parserMod = await import('../services/bulk-parser.js');
       const tplMod = await import('../services/template-service.js');
@@ -309,10 +331,18 @@ export async function runSilentCapacitorAutoSync(onComplete) {
     }
 
     const patchFile = await syncMod.readBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME);
+    if (patchFile && patchFile.permissionError) {
+      if (!permissionToastShown) {
+        permissionToastShown = true;
+        showAppToast('Sin permiso para leer jarvis_crm_patch.json. Activa "Acceso a todos los archivos" en Ajustes.', true);
+      }
+      return;
+    }
     if (patchFile && patchFile.text) {
       const patchMod = await import('../services/jarvis-patch-service.js');
       const patchRes = await patchMod.applyJarvisPatchPayload(patchFile.text);
       patchChanges = patchRes.totalChanges;
+      patchDiscarded = patchRes.discarded || 0;
       forceBackup = Boolean(patchRes.forceBackup);
       campaignChanged = Boolean(patchRes.campaignChanged);
       await syncMod.archiveBlapSyncFile(syncMod.JARVIS_PATCH_FILENAME, patchFile);
@@ -331,12 +361,16 @@ export async function runSilentCapacitorAutoSync(onComplete) {
       resetAutoBackupCounter();
       const parts = [];
       if (leadsAdded > 0) { parts.push(leadsAdded + ' leads nuevos'); }
-      if (patchChanges > 0) { parts.push(patchChanges + ' cambios'); }
+      if (patchChanges > 0) {
+        const discTxt = patchDiscarded > 0 ? ' (' + patchDiscarded + ' descartados)' : '';
+        parts.push(patchChanges + ' cambios' + discTxt);
+      }
       if (forceBackup && parts.length === 0) { parts.push('respaldo actualizado'); }
       if (parts.length > 0) { showAppToast('Jarvis sincronizó ' + parts.join(' y '), false); }
     }
   } catch (err) {
-    /* Sincronización silenciosa: no interrumpir la experiencia si falla lectura */
+    const errMsg = err && err.message ? err.message : 'Error al sincronizar BLAP-Sync';
+    showAppToast('Auto-sync: ' + errMsg, true);
   } finally {
     lastAutoSyncAt = Date.now();
     autoSyncRunning = false;

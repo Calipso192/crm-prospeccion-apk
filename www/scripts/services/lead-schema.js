@@ -1,3 +1,10 @@
+import {
+  normalizeScore,
+  normalizeContactMethod,
+  normalizeRubro,
+  dedupeQuickNotes
+} from './lead-enrich-schema.js';
+
 export const DEFAULT_COUNTRY_CODE = '51';
 export const DEFAULT_CAMPAIGN_ID = 'camp_default';
 export const SCHEMA_VERSION_V4 = 4;
@@ -100,7 +107,7 @@ export function normalizeQuickNotes(rawNotes) {
       });
     }
   });
-  return cleanList;
+  return dedupeQuickNotes(cleanList);
 }
 
 export function computeLastContactAt(record, sentTags) {
@@ -120,6 +127,8 @@ export function createDefaultCampaignState(stage, now) {
   return {
     stage: normalizeStatus(stage),
     channelUsed: '',
+    contactMethod: '',
+    score: null,
     waLineUsed: '',
     isMetaBot: false,
     sentTags: [],
@@ -140,9 +149,12 @@ export function normalizeCampaignState(rawState, fallbackNow) {
   const cleanStage = normalizeStatus(src.stage !== undefined ? src.stage : src.status);
   const sentTags = normalizeTagList(src.sentTags, 'sentAt');
   const updatedAt = Number(src.updatedAt) > 0 ? Number(src.updatedAt) : ts;
+  const rawMethod = src.contactMethod !== undefined ? src.contactMethod : (src.contact_method !== undefined ? src.contact_method : src.recommendedChannel);
   return {
     stage: cleanStage,
     channelUsed: normalizeChannel(src.channelUsed),
+    contactMethod: normalizeContactMethod(rawMethod),
+    score: normalizeScore(src.score),
     waLineUsed: normalizeWaLine(src.waLineUsed),
     isMetaBot: cleanStage === 'descartado' ? Boolean(src.isMetaBot) : false,
     sentTags: sentTags,
@@ -243,7 +255,7 @@ export function normalizeMasterRecord(record, fallbackCampaignId, options) {
     name: src.name ? String(src.name).trim() : '',
     phone: normalizePhone(src.phone),
     instagram: normalizeInstagram(src.instagram),
-    rubro: src.rubro ? String(src.rubro).trim().toLowerCase() : '',
+    rubro: normalizeRubro(src.rubro),
     baseNotes: baseNotes,
     campaignStates: campaignStates,
     campaignHistory: history,
@@ -317,6 +329,8 @@ export function projectLeadForCampaign(masterLead, campaignId, campaignsById) {
     stage: campState.stage,
     status: campState.stage,
     channelUsed: campState.channelUsed,
+    contactMethod: campState.contactMethod ? campState.contactMethod : '',
+    score: campState.score !== undefined ? campState.score : null,
     waLineUsed: campState.waLineUsed,
     isMetaBot: Boolean(campState.isMetaBot),
     sentTags: Array.isArray(campState.sentTags) ? campState.sentTags.slice() : [],
@@ -355,18 +369,7 @@ function mergeSentTags(primaryTags, secondaryTags) {
 }
 
 function mergeQuickNotes(listA, listB) {
-  const seenIds = new Set();
-  const seenSigs = new Set();
-  const merged = [];
-  listA.concat(listB).forEach((note) => {
-    const sig = note.text + '::' + note.createdAt;
-    if (seenIds.has(note.id)) { return; }
-    if (seenSigs.has(sig)) { return; }
-    seenIds.add(note.id);
-    seenSigs.add(sig);
-    merged.push(Object.assign({}, note));
-  });
-  return merged.sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+  return dedupeQuickNotes(listA.concat(listB)).sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
 }
 
 function mergeCampaignHistories(listA, listB) {
@@ -401,6 +404,8 @@ function mergeSingleCampaignState(curState, incState) {
   return normalizeCampaignState({
     stage: primary.stage,
     channelUsed: primary.channelUsed ? primary.channelUsed : secondary.channelUsed,
+    contactMethod: primary.contactMethod ? primary.contactMethod : secondary.contactMethod,
+    score: primary.score !== null && primary.score !== undefined ? primary.score : secondary.score,
     waLineUsed: primary.waLineUsed ? primary.waLineUsed : secondary.waLineUsed,
     isMetaBot: primary.stage === 'descartado' ? Boolean(primary.isMetaBot ? primary.isMetaBot : secondary.isMetaBot) : false,
     saleAmount: primary.stage === 'vendido' ? (primary.saleAmount > 0 ? primary.saleAmount : secondary.saleAmount) : 0,

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v11';
+const CACHE_NAME = 'crm-prospeccion-v15';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const ASSETS_TO_CACHE = [
   './styles/dashboard.css',
   './styles/multichannel.css',
   './scripts/app.js',
+  './scripts/services/lead-enrich-schema.js',
   './scripts/services/lead-schema.js',
   './scripts/services/db-storage.js',
   './scripts/services/db-service.js',
@@ -23,7 +24,9 @@ const ASSETS_TO_CACHE = [
   './scripts/services/jarvis-patch-service.js',
   './scripts/services/backup-service.js',
   './scripts/modules/dashboard-view.js',
+  './scripts/modules/lead-card-badges.js',
   './scripts/modules/lead-card.js',
+  './scripts/modules/lead-enrich-ui.js',
   './scripts/modules/interest-manager-ui.js',
   './scripts/modules/template-modal-ui.js',
   './scripts/modules/modal-tools.js',

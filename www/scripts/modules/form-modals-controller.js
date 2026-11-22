@@ -69,6 +69,8 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
         dom.leadInstagram.value = lead.instagram ? '@' + lead.instagram : '';
       }
       dom.leadRubro.value = lead.rubro ? lead.rubro : '';
+      if (dom.leadScore) { dom.leadScore.value = lead.score !== null && lead.score !== undefined ? String(lead.score) : ''; }
+      if (dom.leadContactMethod) { dom.leadContactMethod.value = lead.contactMethod ? lead.contactMethod : ''; }
       dom.leadStatus.value = lead.stage ? lead.stage : (lead.status ? lead.status : 'nuevo');
       dom.leadAmount.value = lead.saleAmount > 0 ? String(lead.saleAmount) : '';
       dom.leadNotes.value = lead.baseNotes ? lead.baseNotes : (lead.notes ? lead.notes : '');
@@ -77,6 +79,8 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
       dom.leadForm.reset();
       dom.leadId.value = '';
       dom.leadRubro.value = '';
+      if (dom.leadScore) { dom.leadScore.value = ''; }
+      if (dom.leadContactMethod) { dom.leadContactMethod.value = ''; }
       state.draftReminder = { reminderAt: '', reminderReason: '' };
     }
     dom.formReminderPreview.textContent = formatReminderPreview(
@@ -390,6 +394,8 @@ export function createFormModalsController(dom, state, scheduler, campaignCtrl, 
           phone: dom.leadPhone.value,
           instagram: dom.leadInstagram ? dom.leadInstagram.value : '',
           rubro: dom.leadRubro.value,
+          score: dom.leadScore ? (dom.leadScore.value.trim() === '' ? null : dom.leadScore.value) : undefined,
+          contactMethod: dom.leadContactMethod ? dom.leadContactMethod.value : undefined,
           stage: dom.leadStatus.value,
           saleAmount: dom.leadAmount.value,
           reminderAt: state.draftReminder.reminderAt,

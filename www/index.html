@@ -60,6 +60,16 @@
           <option value="comercio">Tienda y Comercio</option>
           <option value="servicios">Servicios y Otros</option>
         </select>
+        <select id="contact-method-filter" aria-label="Filtrar por método de contacto">
+          <option value="todos">Todos los métodos</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="instagram">Instagram</option>
+          <option value="llamada">Llamada</option>
+        </select>
+        <select id="sort-order-filter" aria-label="Ordenar prospectos">
+          <option value="default">Orden por defecto</option>
+          <option value="score_desc">Score IA (Mayor primero)</option>
+        </select>
         <select id="interest-filter" aria-label="Filtrar por etiqueta de interés">
           <option value="todas">Todas las etiquetas de interés</option>
         </select>
@@ -125,6 +135,21 @@
             <option value="comercio">Tienda y Comercio</option>
             <option value="servicios">Servicios y Otros</option>
           </select>
+        </div>
+        <div class="template-meta-selects">
+          <div class="field-group">
+            <label for="lead-score">Score IA (0-10)</label>
+            <input type="number" id="lead-score" min="0" max="10" step="0.1" placeholder="Ej. 8.5">
+          </div>
+          <div class="field-group">
+            <label for="lead-contact-method">Método recomendado</label>
+            <select id="lead-contact-method">
+              <option value="">Sin especificar</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="instagram">Instagram</option>
+              <option value="llamada">Llamada</option>
+            </select>
+          </div>
         </div>
         <div class="field-group">
           <label for="lead-status">Estado en Embudo</label>
@@ -455,14 +480,14 @@
       <p id="backup-feedback" class="backup-feedback hidden"></p>
       <div class="new-template-box">
         <h4>Copia de Seguridad y BLAP-Sync (JSON)</h4>
-        <p class="helper-hint">Exporta respaldos en Download/BLAP-Sync/respaldos/ y el índice en Download/BLAP-Sync/crm_blap_index.json.</p>
+        <p class="helper-hint">Exporta respaldos en Documents/BLAP-Sync/respaldos/ y el índice en Documents/BLAP-Sync/crm_blap_index.json.</p>
         <div class="backup-btn-row">
           <button id="btn-export-backup" class="btn-primary" type="button">Descargar JSON</button>
           <button id="btn-share-backup" class="btn-secondary" type="button">Compartir</button>
         </div>
         <button id="btn-copy-backup" class="btn-secondary btn-full" type="button">Copiar JSON</button>
         <button id="btn-export-dedupe-index" class="btn-secondary btn-full" type="button">Índice BLAP-Sync (crm_blap_index.json)</button>
-        <button id="btn-link-blap-folder" class="btn-secondary btn-full" type="button">Vincular Carpeta Download/BLAP-Sync (Web)</button>
+        <button id="btn-link-blap-folder" class="btn-secondary btn-full" type="button">Vincular Carpeta Documents/BLAP-Sync (Web)</button>
         <div class="field-group">
           <label for="input-import-backup">Restaurar y fusionar desde JSON</label>
           <input type="file" id="input-import-backup" accept=".json,application/json">
@@ -470,7 +495,7 @@
       </div>
       <div class="new-template-box">
         <h4>Buzón de Entrada y Parches Jarvis</h4>
-        <p class="helper-hint">Lee automáticamente desde Download/BLAP-Sync/ o carga manualmente un archivo JSON.</p>
+        <p class="helper-hint">Lee automáticamente desde Documents/BLAP-Sync/ o carga manualmente un archivo JSON.</p>
         <div class="backup-btn-row">
           <button id="btn-sync-blap-leads" class="btn-primary" type="button">Leer leads_nuevos_ia.json</button>
           <button id="btn-sync-jarvis-patch" class="btn-secondary" type="button">Aplicar jarvis_crm_patch.json</button>
@@ -499,6 +524,32 @@
           <textarea id="bulk-leads-text" rows="5" placeholder="Cafetería Central - 987654321 | Canal: WA | Nota: Sin web&#10;Barbería VIP - @barberia_vip | Canal: IG&#10;Vet Patitas - 912345678 - @vet.patitas"></textarea>
         </div>
         <button id="btn-import-bulk" class="btn-whatsapp btn-full" type="button">Agregar Contactos Nuevos</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="score-picker-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="score-picker-title">Score IA</h3>
+      <div id="score-picker-chips" class="quick-chips" style="margin-top:10px;">
+        <button type="button" class="chip-action" data-score-val="5">5.0</button>
+        <button type="button" class="chip-action" data-score-val="6">6.0</button>
+        <button type="button" class="chip-action" data-score-val="7">7.0</button>
+        <button type="button" class="chip-action" data-score-val="7.5">7.5</button>
+        <button type="button" class="chip-action" data-score-val="8">8.0</button>
+        <button type="button" class="chip-action" data-score-val="8.5">8.5</button>
+        <button type="button" class="chip-action" data-score-val="9">9.0</button>
+        <button type="button" class="chip-action" data-score-val="9.5">9.5</button>
+        <button type="button" class="chip-action" data-score-val="10">10</button>
+      </div>
+      <div class="field-group" style="margin-top:10px;">
+        <label for="score-picker-input">O escribe puntaje exacto (0 a 10)</label>
+        <input type="number" id="score-picker-input" min="0" max="10" step="0.1" placeholder="Ej. 8.5">
+      </div>
+      <div class="modal-actions">
+        <button id="btn-score-clear" class="btn-secondary" type="button">Quitar</button>
+        <button id="btn-score-cancel" class="btn-secondary" type="button">Cancelar</button>
+        <button id="btn-score-save" class="btn-primary" type="button">Guardar</button>
       </div>
     </div>
   </div>

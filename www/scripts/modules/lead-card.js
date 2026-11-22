@@ -2,9 +2,14 @@ import { formatReminderLabel, formatRelativeTimeAgo } from '../services/reminder
 import {
   evaluateLeadPhase,
   evaluateReminderUrgency,
-  getInterestTagsCatalog,
-  RUBRO_CATALOG
+  getInterestTagsCatalog
 } from '../services/phase-engine.js';
+import {
+  buildScoreBadge,
+  buildContactMethodBadge,
+  buildRubroBadge,
+  buildInstagramBadge
+} from './lead-card-badges.js';
 
 const STATUS_LABELS = {
   nuevo: 'Nuevo',
@@ -26,11 +31,6 @@ const WA_LINE_LABELS = {
   wa_2: 'WA 2',
   wa_3: 'WA 3'
 };
-
-const RUBRO_LABELS = {};
-RUBRO_CATALOG.forEach((item) => {
-  RUBRO_LABELS[item.key] = item.label;
-});
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -167,30 +167,53 @@ function buildSentTagsRow(lead, handlers) {
 
 function buildInterestRow(lead, statusKey, handlers) {
   const activeTags = Array.isArray(lead.interestTags) ? lead.interestTags : [];
-  if (statusKey !== 'seguimiento' && activeTags.length === 0) {
-    return null;
-  }
   const activeIds = activeTags.map((t) => t.id);
-  const catalog = Array.isArray(handlers.interestCatalog) ? handlers.interestCatalog : getInterestTagsCatalog();
+  const baseCatalog = Array.isArray(handlers.interestCatalog) ? handlers.interestCatalog : getInterestTagsCatalog();
+  const catalogIds = new Set(baseCatalog.map((t) => t.id));
+  const extraActive = activeTags
+    .filter((t) => t && t.id && !catalogIds.has(t.id))
+    .map((t) => ({ id: t.id, label: t.label || t.id, tone: 'ai' }));
+  const catalog = baseCatalog.concat(extraActive);
+
   const row = el('div', 'interest-tags-row');
+  const shouldCollapseInactive = true;
+  const hiddenChips = [];
 
   catalog.forEach((tagObj) => {
     const isActive = activeIds.indexOf(tagObj.id) !== -1;
-    if (statusKey !== 'seguimiento' && !isActive) {
-      return;
-    }
     const cls = isActive ? 'interest-chip active heat-' + tagObj.tone : 'interest-chip heat-' + tagObj.tone;
-    const btn = el('button', cls, tagObj.label);
+    const btn = el('button', cls, (isActive ? '✓ ' : '') + tagObj.label);
     btn.type = 'button';
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     btn.addEventListener('click', (ev) => {
       if (inSelection(handlers)) { return; }
       ev.stopPropagation();
+      const nextActive = !btn.classList.contains('active');
+      btn.classList.toggle('active', nextActive);
+      btn.setAttribute('aria-pressed', nextActive ? 'true' : 'false');
+      btn.textContent = (nextActive ? '✓ ' : '') + tagObj.label;
       if (handlers.onToggleInterestTag) {
         handlers.onToggleInterestTag(lead, tagObj);
       }
     });
+    if (shouldCollapseInactive && !isActive) {
+      btn.classList.add('hidden');
+      hiddenChips.push(btn);
+    }
     row.appendChild(btn);
   });
+
+  if (shouldCollapseInactive && hiddenChips.length > 0) {
+    const expandBtn = el('button', 'btn-add-tag', '+ Etiqueta');
+    expandBtn.type = 'button';
+    expandBtn.addEventListener('click', (ev) => {
+      if (inSelection(handlers)) { return; }
+      ev.stopPropagation();
+      hiddenChips.forEach((chip) => chip.classList.remove('hidden'));
+      expandBtn.remove();
+    });
+    row.appendChild(expandBtn);
+  }
 
   return row.childNodes.length > 0 ? row : null;
 }
@@ -246,38 +269,36 @@ function buildNotesSection(lead, statusKey, handlers) {
     }
   }
 
-  if (statusKey === 'seguimiento') {
-    const bar = el('div', 'quick-note-bar');
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Nota rápida con fecha...';
-    input.addEventListener('click', (ev) => {
-      if (inSelection(handlers)) { input.blur(); return; }
-      ev.stopPropagation();
-    });
-    const saveBtn = el('button', 'btn-primary btn-compact', '+ Nota');
-    saveBtn.type = 'button';
-    const submitNote = () => {
-      const val = input.value.trim();
-      if (val && !inSelection(handlers) && handlers.onAddQuickNote) {
-        input.value = '';
-        handlers.onAddQuickNote(lead, val);
-      }
-    };
-    saveBtn.addEventListener('click', (ev) => {
-      if (inSelection(handlers)) { return; }
-      ev.stopPropagation();
-      submitNote();
-    });
-    input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); submitNote(); }
-    });
-    bar.appendChild(input);
-    bar.appendChild(saveBtn);
-    wrap.appendChild(bar);
-  }
+  const bar = el('div', 'quick-note-bar');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Nota rápida con fecha...';
+  input.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { input.blur(); return; }
+    ev.stopPropagation();
+  });
+  const saveBtn = el('button', 'btn-primary btn-compact', '+ Nota');
+  saveBtn.type = 'button';
+  const submitNote = () => {
+    const val = input.value.trim();
+    if (val && !inSelection(handlers) && handlers.onAddQuickNote) {
+      input.value = '';
+      handlers.onAddQuickNote(lead, val);
+    }
+  };
+  saveBtn.addEventListener('click', (ev) => {
+    if (inSelection(handlers)) { return; }
+    ev.stopPropagation();
+    submitNote();
+  });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); submitNote(); }
+  });
+  bar.appendChild(input);
+  bar.appendChild(saveBtn);
+  wrap.appendChild(bar);
 
-  return wrap.childNodes.length > 0 ? wrap : null;
+  return wrap;
 }
 
 function buildTriageBlock(lead, handlers) {
@@ -375,21 +396,18 @@ function buildHeader(lead, statusKey, handlers) {
   if (lead.phone) {
     subRow.appendChild(el('span', 'lead-phone', '+' + lead.phone));
   }
-  if (lead.instagram) {
-    subRow.appendChild(el('span', 'lead-ig-badge', '@' + lead.instagram));
+  const igBadge = buildInstagramBadge(lead, handlers);
+  if (igBadge) {
+    subRow.appendChild(igBadge);
   }
 
-  const hasRubro = Boolean(lead.rubro && RUBRO_LABELS[lead.rubro]);
-  const rubroBtn = el('button', hasRubro ? 'rubro-btn rubro-' + lead.rubro : 'rubro-btn rubro-empty', hasRubro ? RUBRO_LABELS[lead.rubro] : '+ Rubro');
-  rubroBtn.type = 'button';
-  rubroBtn.addEventListener('click', (ev) => {
-    if (inSelection(handlers)) { return; }
-    ev.stopPropagation();
-    if (handlers.onPickRubro) { handlers.onPickRubro(lead); }
-  });
-  subRow.appendChild(rubroBtn);
+  const badgesRow = el('div', 'lead-badges-row');
+  badgesRow.appendChild(buildScoreBadge(lead, handlers));
+  badgesRow.appendChild(buildContactMethodBadge(lead, handlers));
+  badgesRow.appendChild(buildRubroBadge(lead, handlers));
 
   infoBox.appendChild(subRow);
+  infoBox.appendChild(badgesRow);
   leftWrap.appendChild(infoBox);
 
   const pillBtn = el('button', 'status-pill status-' + statusKey, STATUS_LABELS[statusKey] ? STATUS_LABELS[statusKey] : statusKey);
@@ -448,15 +466,19 @@ export function createLeadCard(lead, handlers) {
   const hasPhone = Boolean(lead.phone);
   const hasIg = Boolean(lead.instagram);
   const waLabel = handlers.activeWaLineLabel ? 'WhatsApp · ' + handlers.activeWaLineLabel : 'WhatsApp';
+  const recMethod = lead.contactMethod ? String(lead.contactMethod) : '';
 
   if (hasPhone && statusKey !== 'sin_whatsapp') {
-    actions.appendChild(createCardActionBtn('btn-whatsapp', waLabel, handlers, () => handlers.onWhatsApp(lead)));
+    const waCls = recMethod === 'whatsapp' ? 'btn-whatsapp btn-action-featured' : 'btn-whatsapp';
+    actions.appendChild(createCardActionBtn(waCls, waLabel, handlers, () => handlers.onWhatsApp(lead)));
   }
   if (hasIg) {
-    actions.appendChild(createCardActionBtn('btn-instagram', 'Instagram DM', handlers, () => handlers.onInstagram(lead)));
+    const igCls = recMethod === 'instagram' ? 'btn-instagram btn-action-featured' : 'btn-instagram';
+    actions.appendChild(createCardActionBtn(igCls, 'Instagram DM', handlers, () => handlers.onInstagram(lead)));
   }
   if (hasPhone) {
-    actions.appendChild(createCardActionBtn('btn-call', 'Llamar', handlers, () => handlers.onCall(lead)));
+    const callCls = recMethod === 'llamada' ? 'btn-call btn-action-featured' : 'btn-call';
+    actions.appendChild(createCardActionBtn(callCls, 'Llamar', handlers, () => handlers.onCall(lead)));
   }
   if (!(hasPhone ? true : hasIg)) {
     actions.appendChild(createCardActionBtn('btn-secondary', 'Buscar', handlers, () => handlers.onSearch(lead)));

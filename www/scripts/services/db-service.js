@@ -1,3 +1,4 @@
+import { normalizeScore, normalizeContactMethod, normalizeRubro, isDuplicateNote, applyRawEnrichFields } from './lead-enrich-schema.js';
 import {
   DEFAULT_CAMPAIGN_ID, normalizePhone, normalizeInstagram, normalizeChannel, normalizeWaLine,
   normalizeStatus, parseSaleAmount, createDefaultCampaignState, normalizeCampaignState,
@@ -186,6 +187,8 @@ function buildInputCampaignState(leadData, baseState, now) {
   const seed = baseState ? baseState : createDefaultCampaignState(stage, now);
   return normalizeCampaignState(Object.assign({}, seed, {
     stage: stage,
+    score: leadData.score !== undefined ? normalizeScore(leadData.score) : seed.score,
+    contactMethod: leadData.contactMethod !== undefined ? normalizeContactMethod(leadData.contactMethod) : seed.contactMethod,
     saleAmount: stage === 'vendido' ? parseSaleAmount(leadData.saleAmount) : 0,
     reminderAt: leadData.reminderAt !== undefined ? leadData.reminderAt : seed.reminderAt,
     reminderReason: leadData.reminderReason !== undefined ? leadData.reminderReason : seed.reminderReason,
@@ -287,8 +290,9 @@ export function bulkInsertLeads(leadsList, options) {
           const cleanName = raw && raw.name ? String(raw.name).trim() : '';
           if (!(cleanName && hasValidChannel(cleanPhone, cleanIg))) { return; }
           const suggestedChan = normalizeChannel(raw && (raw.channelUsed ? raw.channelUsed : raw.channel));
-          const initialState = createDefaultCampaignState('nuevo', now);
+          const initialState = createDefaultCampaignState(raw && raw.stage ? raw.stage : 'nuevo', now);
           if (suggestedChan) { initialState.channelUsed = suggestedChan; }
+          applyRawEnrichFields(initialState, raw, normalizeScore, normalizeContactMethod);
           const cleanNotes = raw && raw.baseNotes ? String(raw.baseNotes).trim() : '';
           const match = findInMaps(byPhone, byIg, cleanPhone, cleanIg);
           if (match) {
@@ -335,7 +339,16 @@ function setStageState(cs, stage, now, amount, isMetaBot) {
 }
 
 export function updateLeadRubro(leadId, newRubro) {
-  return updateSingleMaster(leadId, (record) => { record.rubro = newRubro ? String(newRubro).trim().toLowerCase() : ''; });
+  return updateSingleMaster(leadId, (record) => { record.rubro = normalizeRubro(newRubro); });
+}
+
+export function updateLeadEnrichFields(leadId, campaignId, patch) {
+  return updateCampaignState(leadId, campaignId, (cs, record) => {
+    if (patch.rubro !== undefined) { record.rubro = normalizeRubro(patch.rubro); }
+    if (patch.instagram !== undefined) { record.instagram = normalizeInstagram(patch.instagram); }
+    if (patch.score !== undefined) { cs.score = normalizeScore(patch.score); }
+    if (patch.contactMethod !== undefined) { cs.contactMethod = normalizeContactMethod(patch.contactMethod); }
+  });
 }
 
 export function updateLeadCampaignStage(leadId, campaignId, targetStage, extra) {
@@ -397,6 +410,7 @@ export function addQuickNoteToLead(leadId, campaignId, noteText) {
   const cleanText = noteText ? String(noteText).trim() : '';
   if (!cleanText) { return Promise.resolve(null); }
   return updateCampaignState(leadId, campaignId, (cs, record, now) => {
+    if (isDuplicateNote(cs.quickNotes, cleanText)) { return; }
     cs.quickNotes.unshift({ id: 'note_' + now + '_' + Math.random().toString(36).slice(2, 6), text: cleanText, createdAt: now });
     cs.lastContactAt = now;
   });
@@ -420,37 +434,19 @@ export function updateLeadSuggestedMessage(leadId, campaignId, msg) {
 function renameTagsInStates(listKey, tagIdMap, options) {
   return mutateAllCampaignStates((st) => {
     let changed = false;
-    st[listKey] = st[listKey].map((tag) => {
-      const next = tagIdMap[tag.id];
-      if (next && tag.label !== next) { changed = true; return Object.assign({}, tag, { label: next }); }
-      return tag;
-    });
+    st[listKey] = st[listKey].map((tag) => { const next = tagIdMap[tag.id]; if (next && tag.label !== next) { changed = true; return Object.assign({}, tag, { label: next }); } return tag; });
     return changed;
   }, options);
 }
-
 export function syncAllTagLabels(labelsMap) {
   const map = labelsMap && typeof labelsMap === 'object' ? labelsMap : {};
   return Object.keys(map).length === 0 ? Promise.resolve(0) : renameTagsInStates('sentTags', map, { skipIncrementChanges: true });
 }
-
-export function renameTagAcrossLeads(tagId, newLabel) {
-  const clean = newLabel ? String(newLabel).trim() : '';
-  return (tagId && clean) ? syncAllTagLabels({ [tagId]: clean }) : Promise.resolve(0);
-}
-
-export function renameInterestTagAcrossLeads(tagId, newLabel) {
-  const clean = newLabel ? String(newLabel).trim() : '';
-  return (tagId && clean) ? renameTagsInStates('interestTags', { [tagId]: clean }) : Promise.resolve(0);
-}
-
+export function renameTagAcrossLeads(tagId, newLabel) { const clean = newLabel ? String(newLabel).trim() : ''; return (tagId && clean) ? syncAllTagLabels({ [tagId]: clean }) : Promise.resolve(0); }
+export function renameInterestTagAcrossLeads(tagId, newLabel) { const clean = newLabel ? String(newLabel).trim() : ''; return (tagId && clean) ? renameTagsInStates('interestTags', { [tagId]: clean }) : Promise.resolve(0); }
 export function removeInterestTagAcrossLeads(tagId) {
   if (!tagId) { return Promise.resolve(0); }
-  return mutateAllCampaignStates((st) => {
-    const before = st.interestTags.length;
-    st.interestTags = st.interestTags.filter((tag) => tag.id !== tagId);
-    return st.interestTags.length !== before;
-  });
+  return mutateAllCampaignStates((st) => { const b = st.interestTags.length; st.interestTags = st.interestTags.filter((tag) => tag.id !== tagId); return st.interestTags.length !== b; });
 }
 
 export function bulkAssignTagByStatuses(campaignId, statuses, tagData) {

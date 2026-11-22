@@ -134,6 +134,15 @@ export function createListRenderer(elements, state, getBaseHandlers) {
       return matchesSearchQuery(lead, state.searchQuery);
     });
 
+    if (state.sortOrder === 'score_desc') {
+      return filtered.slice().sort((a, b) => {
+        const sA = a.score !== null && a.score !== undefined ? Number(a.score) : -1;
+        const sB = b.score !== null && b.score !== undefined ? Number(b.score) : -1;
+        if (sB !== sA) { return sB - sA; }
+        return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+      });
+    }
+
     const isSeguimientoView = state.filter === 'seguimiento' ? true : state.queueFilter === 'seg_urgente';
     if (isSeguimientoView) {
       return sortSeguimientoLeads(filtered, now);

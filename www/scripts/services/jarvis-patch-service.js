@@ -1,7 +1,9 @@
 import {
   getAllLeads,
   mergeImportedLeads,
+  bulkInsertLeads,
   updateLeadCampaignStage,
+  updateLeadEnrichFields,
   toggleInterestTag,
   updateLeadReminder,
   updateLeadSuggestedMessage,
@@ -9,6 +11,12 @@ import {
   normalizePhone,
   normalizeInstagram
 } from './db-service.js';
+import {
+  normalizeScore,
+  normalizeContactMethod,
+  normalizeRubro,
+  isDuplicateNote
+} from './lead-enrich-schema.js';
 import { getActiveCampaignId, setActiveCampaign, getCampaigns, mergeCampaigns, mergeTemplates } from './template-service.js';
 import { getInterestTagsCatalog, mergeInterestTagsCatalog } from './phase-engine.js';
 import { mergeChannelStats } from './channel-service.js';
@@ -97,14 +105,32 @@ async function applyStandardBackupFormat(parsed) {
 
 async function applyPatchItem(lead, patch, activeCid, catalog) {
   let modified = false;
+  let discarded = false;
   const cs = lead.campaignStates && lead.campaignStates[activeCid] ? lead.campaignStates[activeCid] : null;
 
   if (patch.stage) {
     const extra = patch.saleAmount !== undefined ? { saleAmount: patch.saleAmount } : undefined;
     await updateLeadCampaignStage(lead.id, activeCid, patch.stage, extra);
+    if (String(patch.stage).trim().toLowerCase() === 'descartado') { discarded = true; }
     modified = true;
   } else if (patch.saleAmount !== undefined && cs) {
     await updateLeadCampaignStage(lead.id, activeCid, cs.stage || 'ganado', { saleAmount: patch.saleAmount });
+    modified = true;
+  }
+
+  const enrichPatch = {};
+  if (patch.score !== undefined) { enrichPatch.score = normalizeScore(patch.score); }
+  const rawMethod = patch.contactMethod !== undefined
+    ? patch.contactMethod
+    : (patch.contact_method !== undefined ? patch.contact_method : patch.recommendedChannel);
+  if (rawMethod !== undefined) { enrichPatch.contactMethod = normalizeContactMethod(rawMethod); }
+  if (patch.rubro !== undefined) { enrichPatch.rubro = normalizeRubro(patch.rubro); }
+  if (patch.instagram !== undefined || patch.ig !== undefined) {
+    const cleanIg = normalizeInstagram(patch.instagram !== undefined ? patch.instagram : patch.ig);
+    if (cleanIg) { enrichPatch.instagram = cleanIg; }
+  }
+  if (Object.keys(enrichPatch).length > 0) {
+    await updateLeadEnrichFields(lead.id, activeCid, enrichPatch);
     modified = true;
   }
 
@@ -132,14 +158,30 @@ async function applyPatchItem(lead, patch, activeCid, catalog) {
     modified = true;
   }
 
-  if (patch.note && String(patch.note).trim()) {
+  const existingNotes = cs && Array.isArray(cs.quickNotes) ? cs.quickNotes.slice() : [];
+  const rawNotesToAdd = [];
+  if (patch.note && String(patch.note).trim()) { rawNotesToAdd.push(String(patch.note).trim()); }
+  if (Array.isArray(patch.quickNotes)) {
+    patch.quickNotes.forEach((n) => {
+      const txt = n && typeof n === 'object' ? n.text : n;
+      if (txt && String(txt).trim()) { rawNotesToAdd.push(String(txt).trim()); }
+    });
+  } else if (patch.notes && String(patch.notes).trim()) {
+    rawNotesToAdd.push(String(patch.notes).trim());
+  }
+
+  for (let nIdx = 0; nIdx < rawNotesToAdd.length; nIdx += 1) {
+    const noteBody = rawNotesToAdd[nIdx];
+    if (isDuplicateNote(existingNotes, noteBody)) { continue; }
     const stamp = formatPatchNoteDate(new Date());
-    const formatted = '[' + stamp + '] ' + String(patch.note).trim();
+    const hasStamp = /^\[\d{2,4}[/-]\d{2}/.test(noteBody);
+    const formatted = hasStamp ? noteBody : '[' + stamp + '] ' + noteBody;
     await addQuickNoteToLead(lead.id, activeCid, formatted);
+    existingNotes.unshift({ text: formatted });
     modified = true;
   }
 
-  return modified;
+  return { modified, discarded };
 }
 
 export async function applyJarvisPatchPayload(rawText) {
@@ -180,8 +222,11 @@ export async function applyJarvisPatchPayload(rawText) {
   const lookup = buildLeadLookup(leads);
   const catalog = getInterestTagsCatalog();
 
+  let added = 0;
   let updated = 0;
+  let discarded = 0;
   let skipped = 0;
+  const toInsert = [];
 
   for (let i = 0; i < patchesList.length; i += 1) {
     const patch = patchesList[i];
@@ -191,24 +236,49 @@ export async function applyJarvisPatchPayload(rawText) {
     }
     const targetLead = findMatchingLead(patch, lookup);
     if (!targetLead) {
-      if (!(patch && (patch.force_backup === true || patch.activeCampaignId))) { skipped += 1; }
+      const pName = patch && (patch.name || patch.nombre) ? String(patch.name || patch.nombre).trim() : '';
+      const pPhone = normalizePhone(patch && (patch.phone || patch.telefono));
+      const pIg = normalizeInstagram(patch && (patch.instagram || patch.ig));
+      if (pName && (pPhone.length >= 7 || pIg.length >= 2)) {
+        toInsert.push({
+          name: pName,
+          phone: pPhone,
+          instagram: pIg,
+          rubro: normalizeRubro(patch.rubro),
+          stage: patch.stage || 'nuevo',
+          score: normalizeScore(patch.score),
+          contactMethod: normalizeContactMethod(patch.contactMethod || patch.contact_method || patch.recommendedChannel),
+          suggestedMessage: patch.suggestedMessage ? String(patch.suggestedMessage).trim() : '',
+          quickNotes: patch.note ? [{ text: String(patch.note).trim(), createdAt: Date.now() }] : []
+        });
+        if (String(patch.stage || '').trim().toLowerCase() === 'descartado') { discarded += 1; }
+      } else if (!(patch && (patch.force_backup === true || patch.activeCampaignId))) {
+        skipped += 1;
+      }
       continue;
     }
     const targetCid = patch.campaignId ? String(patch.campaignId) : getActiveCampaignId();
-    const didChange = await applyPatchItem(targetLead, patch, targetCid, catalog);
-    if (didChange) {
+    const resItem = await applyPatchItem(targetLead, patch, targetCid, catalog);
+    if (resItem.modified) {
       updated += 1;
+      if (resItem.discarded) { discarded += 1; }
     } else {
       skipped += 1;
     }
   }
 
+  if (toInsert.length > 0) {
+    const insStats = await bulkInsertLeads(toInsert, { defaultCampaignId: getActiveCampaignId() });
+    added = insStats.added;
+  }
+
   return {
     format: 'patches',
-    added: 0,
+    added: added,
     updated: updated,
+    discarded: discarded,
     skipped: skipped,
-    totalChanges: updated,
+    totalChanges: added + updated,
     forceBackup,
     campaignChanged
   };

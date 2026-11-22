@@ -94,6 +94,32 @@
 }
 .select-check.checked { background-color: var(--accent-primary); border-color: var(--accent-primary); }
 .lead-sub-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.lead-badges-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.lead-ig-badge.clickable {
+  cursor: pointer; border: 1px solid rgba(244, 114, 182, 0.45); background-color: rgba(244, 114, 182, 0.14);
+  color: #f472b6; border-radius: 999px; min-height: 26px; padding: 2px 9px; font-size: 0.74rem; font-weight: 700;
+}
+.score-badge, .contact-method-badge {
+  border-radius: 999px; min-height: 26px; padding: 2px 9px;
+  font-size: 0.74rem; font-weight: 700; border: 1px solid currentColor;
+}
+.score-high { color: #4ade80; background-color: rgba(74, 222, 128, 0.14); }
+.score-mid { color: #fbbf24; background-color: rgba(251, 191, 36, 0.14); }
+.score-low { color: #f87171; background-color: rgba(248, 113, 113, 0.14); }
+.score-empty { color: var(--text-secondary); background-color: transparent; border-style: dashed; }
+.method-whatsapp { color: var(--accent-whatsapp); background-color: rgba(34, 197, 94, 0.14); }
+.method-instagram { color: #f472b6; background-color: rgba(244, 114, 182, 0.14); }
+.method-llamada { color: #38bdf8; background-color: rgba(56, 189, 248, 0.14); }
+.method-empty { color: var(--text-secondary); background-color: transparent; border-style: dashed; }
+.btn-action-featured { box-shadow: 0 0 0 2px currentColor; transform: translateY(-1px); }
+
+.backup-btn-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
+.backup-btn-row button {
+  min-width: 0; white-space: normal; word-break: break-word; line-height: 1.2; padding: 8px 10px;
+}
+@media (max-width: 420px) {
+  .backup-btn-row { grid-template-columns: 1fr; }
+}
 
 .rubro-btn {
   border-radius: 999px; min-height: 26px; padding: 2px 10px;

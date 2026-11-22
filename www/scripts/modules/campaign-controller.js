@@ -33,6 +33,13 @@ export function matchesRubroAndCampaign(lead, filterState) {
     }
   }
 
+  if (filterState.contactMethod && filterState.contactMethod !== 'todos') {
+    const leadMethod = lead.contactMethod ? lead.contactMethod : '';
+    if (leadMethod !== filterState.contactMethod) {
+      return false;
+    }
+  }
+
   if (filterState.interestFilter && filterState.interestFilter !== 'todas') {
     const interestList = Array.isArray(lead.interestTags) ? lead.interestTags : [];
     const hasInterest = interestList.some((item) => item.id === filterState.interestFilter);

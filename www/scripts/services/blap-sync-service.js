@@ -188,7 +188,15 @@ async function readNativeBlapFile(fileName, subFolder) {
         };
       }
     } catch (err) {
-      /* Archivo no existe o directorio sin acceso; probar siguiente candidato */
+      const msg = err && err.message ? String(err.message) : '';
+      if (/perm|denied|eacces|security|scoped|not permitted/i.test(msg)) {
+        return {
+          permissionError: true,
+          errorMessage: msg,
+          path: targetPath,
+          displayPath: joinPath(cand.label, subFolder, fileName)
+        };
+      }
     }
   }
   return null;

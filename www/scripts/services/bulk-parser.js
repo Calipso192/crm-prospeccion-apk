@@ -1,4 +1,5 @@
-import { normalizePhone, normalizeInstagram, normalizeChannel } from './lead-schema.js';
+import { normalizePhone, normalizeInstagram, normalizeChannel, normalizeStatus } from './lead-schema.js';
+import { normalizeScore, normalizeContactMethod, normalizeRubro } from './lead-enrich-schema.js';
 
 const EXPLICIT_SEPARATORS = [' - ', ' – ', ' — ', '\t', ';', ',', ': '];
 
@@ -145,16 +146,32 @@ export function parseNightBatchJson(rawJsonText, defaultRubro) {
     const phone = normalizePhone(item.phone || item.telefono || item.tel || '');
     const instagram = normalizeInstagram(item.instagram || item.ig || '');
     if (!name || !hasValidChannelValues(phone, instagram)) { return; }
-    const rubro = item.rubro ? String(item.rubro).trim().toLowerCase() : fallbackRubro;
+    const rubro = normalizeRubro(item.rubro ? item.rubro : fallbackRubro);
     const channelUsed = mapChannelAlias(item.channelUsed || item.channel || item.canal || item.suggestedChannel || '');
-    const baseNotes = String(item.baseNotes || item.note || item.nota || item.notes || '').trim();
+    const contactMethod = normalizeContactMethod(item.contactMethod || item.contact_method || item.recommendedChannel || item.canalRecomendado || channelUsed);
+    const score = normalizeScore(item.score);
+    const stage = normalizeStatus(item.stage || item.status || 'nuevo');
+    const baseNotes = String(item.baseNotes || item.notes || '').trim();
+    const singleNote = String(item.note || item.nota || '').trim();
+    const quickNotes = Array.isArray(item.quickNotes) ? item.quickNotes.slice() : [];
+    if (singleNote) {
+      quickNotes.unshift({ text: singleNote, createdAt: Date.now() });
+    }
+    const interestTags = Array.isArray(item.interestTags)
+      ? item.interestTags.map((t) => (typeof t === 'object' ? t : { id: 'int_' + String(t).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'), label: String(t).trim() })).filter((t) => t.id && t.label)
+      : [];
     results.push({
       name: name,
       phone: phone,
       instagram: instagram,
       rubro: rubro,
-      stage: 'nuevo',
+      stage: stage,
+      score: score,
+      contactMethod: contactMethod,
       channelUsed: channelUsed,
+      suggestedMessage: item.suggestedMessage ? String(item.suggestedMessage).trim() : '',
+      interestTags: interestTags,
+      quickNotes: quickNotes,
       baseNotes: baseNotes
     });
   });

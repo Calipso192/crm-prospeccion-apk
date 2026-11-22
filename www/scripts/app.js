@@ -16,13 +16,20 @@ import { createSelectionController } from './modules/selection-controller.js';
 import { createListRenderer } from './modules/list-renderer.js';
 import { createFormModalsController } from './modules/form-modals-controller.js';
 import { showAppToast } from './modules/modal-tools.js';
+import {
+  syncStageTabCounts,
+  cycleLeadContactMethod,
+  createScorePickerController,
+  initCapacitorAndSw
+} from './modules/lead-enrich-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const PENDING_WA_KEY = 'crm_prospeccion_pending_wa_v2';
 
 const state = {
   masterLeads: [], leads: [], activeView: 'dashboard', filter: 'todos', queueFilter: '',
-  rubro: 'todos', interestFilter: 'todas', campaignTplId: 'todas', campaignState: 'pendiente',
+  rubro: 'todos', contactMethod: 'todos', sortOrder: 'default',
+  interestFilter: 'todas', campaignTplId: 'todas', campaignState: 'pendiente',
   searchQuery: '', pendingWhatsAppLead: null, activePickerLead: null,
   quickStatusLead: null, reminderTargetLead: null,
   draftReminder: { reminderAt: '', reminderReason: '' },
@@ -39,6 +46,7 @@ const dom = {
   formModal: $('lead-form-modal'), formTitle: $('form-title'), formFeedback: $('form-feedback'),
   leadForm: $('lead-form'), leadId: $('lead-id'), leadName: $('lead-name'),
   leadPhone: $('lead-phone'), leadInstagram: $('lead-instagram'), leadRubro: $('lead-rubro'),
+  leadScore: $('lead-score'), leadContactMethod: $('lead-contact-method'),
   leadStatus: $('lead-status'), saleAmountGroup: $('sale-amount-group'),
   leadAmount: $('lead-amount'), leadNotes: $('lead-notes'),
   formReminderPreview: $('form-reminder-preview'), reminderModal: $('reminder-modal'),
@@ -134,11 +142,22 @@ async function runChannelTouch(lead, channelKey, openFn, toastPrefix) {
   showAppToast(toastPrefix + ' · ' + count + ' hoy', false);
 }
 
+const scorePickerCtrl = createScorePickerController(
+  $('score-picker-modal'), $('score-picker-title'), $('score-picker-chips'),
+  $('score-picker-input'), $('btn-score-save'), $('btn-score-clear'), $('btn-score-cancel'),
+  async () => { await refreshLeads(); showAppToast('Score IA actualizado', false); }
+);
+
 const listRenderer = createListRenderer({ leadsList: dom.leadsList }, state, (waMod, tagLabelsMap) => ({
   tagLabelsMap: tagLabelsMap,
   onEnterSelection: (lead) => selectionCtrl.enterSelection(lead),
   onToggleSelect: (lead) => selectionCtrl.toggleSelect(lead),
   onPickRubro: withMutable((lead) => selectionCtrl.openSingleRubroPicker(lead)),
+  onPickScore: withMutable((lead) => scorePickerCtrl.open(lead)),
+  onCycleContactMethod: withMutable((lead) => cycleLeadContactMethod(lead, async (m) => {
+    await refreshLeads();
+    showAppToast('Canal recomendado: ' + m, false);
+  })),
   onQuickStatus: withMutable((lead) => modalsCtrl.openQuickStatusModal(lead)),
   onWhatsApp: (lead) => openTemplatePicker(lead),
   onInstagram: async (lead) => {
@@ -155,8 +174,7 @@ const listRenderer = createListRenderer({ leadsList: dom.leadsList }, state, (wa
     await applyLeadTriageOutcome(lead.id, lead.campaignId, 'descartado', isMetaBot); await refreshLeads(); showAppToast(lead.name + ' descartado' + (isMetaBot ? ' (marcado Bot Meta)' : ''), false);
   }),
   onToggleInterestTag: withMutable(async (lead, tagObj) => {
-    await toggleInterestTag(lead.id, lead.campaignId, tagObj);
-    await refreshLeads();
+    const y = window.scrollY; await toggleInterestTag(lead.id, lead.campaignId, tagObj); await refreshLeads(); window.scrollTo(0, y);
   }),
   onAddQuickNote: withMutable(async (lead, noteText) => {
     await addQuickNoteToLead(lead.id, lead.campaignId, noteText);
@@ -189,6 +207,7 @@ const QUEUE_NAMES = {
 };
 
 function syncFilterChipsUi() {
+  syncStageTabCounts(state.leads);
   document.querySelectorAll('.filter-chip').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.filter === state.filter);
   });
@@ -391,10 +410,11 @@ async function openTemplatePicker(lead) {
 }
 
 function bindEvents() {
-  scheduler.bind();
-  campaignCtrl.bind();
-  selectionCtrl.bind();
-  modalsCtrl.bind();
+  scheduler.bind(); campaignCtrl.bind(); selectionCtrl.bind(); modalsCtrl.bind(); scorePickerCtrl.bind();
+  const cmFilter = $('contact-method-filter');
+  if (cmFilter) { cmFilter.addEventListener('change', async () => { state.contactMethod = cmFilter.value; await renderActiveView(); }); }
+  const sortFilter = $('sort-order-filter');
+  if (sortFilter) { sortFilter.addEventListener('change', async () => { state.sortOrder = sortFilter.value; await renderActiveView(); }); }
 
   dom.tabDashboard.addEventListener('click', () => switchView('dashboard'));
   dom.tabLeads.addEventListener('click', () => switchView('leads'));
@@ -431,29 +451,6 @@ function bindEvents() {
   });
 }
 
-function initCapacitorDeepLinks() {
-  const plugins = typeof window !== 'undefined' && window.Capacitor ? window.Capacitor.Plugins : null;
-  if (!plugins) { return; }
-  if (plugins.App && typeof plugins.App.addListener === 'function') {
-    plugins.App.addListener('appUrlOpen', (ev) => {
-      if (ev && String(ev.url || '').startsWith('crmblap://autosync')) { triggerSilentBlapSync(); }
-    });
-  }
-  if (plugins.LocalNotifications && typeof plugins.LocalNotifications.addListener === 'function') {
-    plugins.LocalNotifications.addListener('localNotificationActionPerformed', async (event) => {
-      const leadId = event && event.notification && event.notification.extra ? event.notification.extra.leadId : '';
-      if (!leadId) { return; }
-      state.filter = 'todos'; state.queueFilter = ''; await switchView('leads'); await listRenderer.focusLeadById(leadId);
-    });
-  }
-}
-
-function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) { return; }
-  const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
-}
-
 async function syncStoredTagLabels() {
   const tplModule = await import('./services/template-service.js');
   const labelsMap = {};
@@ -485,9 +482,10 @@ async function triggerSilentBlapSync() {
 }
 
 async function initApp() {
-  registerServiceWorker();
+  initCapacitorAndSw(triggerSilentBlapSync, async (leadId) => {
+    state.filter = 'todos'; state.queueFilter = ''; await switchView('leads'); await listRenderer.focusLeadById(leadId);
+  });
   bindEvents();
-  initCapacitorDeepLinks();
   const tplMod = await import('./services/template-service.js');
   await migrateDatabaseToV4(tplMod.getActiveCampaignId());
   await syncStoredTagLabels();
