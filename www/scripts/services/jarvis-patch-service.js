@@ -1,6 +1,7 @@
 import {
   getAllLeads, mergeImportedLeads, bulkInsertLeads, updateLeadCampaignStage, updateLeadEnrichFields,
-  toggleInterestTag, updateLeadReminder, updateLeadSuggestedMessage, addQuickNoteToLead, normalizePhone, normalizeInstagram
+  toggleInterestTag, updateLeadReminder, updateLeadSuggestedMessage, addQuickNoteToLead,
+  removeQuickNoteFromLead, normalizePhone, normalizeInstagram
 } from './db-service.js';
 import { normalizeScore, normalizeContactMethod, normalizeRubro, isDuplicateNote } from './lead-enrich-schema.js';
 import { getActiveCampaignId, setActiveCampaign, getCampaigns, mergeCampaigns, mergeTemplates } from './template-service.js';
@@ -150,7 +151,28 @@ async function applyPatchItem(lead, patch, activeCid, catalog) {
     modified = true;
   }
 
-  const existingNotes = cs && Array.isArray(cs.quickNotes) ? cs.quickNotes.slice() : [];
+  let existingNotes = cs && Array.isArray(cs.quickNotes) ? cs.quickNotes.slice() : [];
+  const shouldCleanScript = Boolean(patch.cleanScriptQuickNotes === true ? true : enrichPatch.baseNotes);
+  const removeList = Array.isArray(patch.removeQuickNotes)
+    ? patch.removeQuickNotes.map((p) => String(p ? p : '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  if (shouldCleanScript ? true : removeList.length > 0) {
+    const keptNotes = [];
+    for (let qIdx = 0; qIdx < existingNotes.length; qIdx += 1) {
+      const item = existingNotes[qIdx];
+      const txt = item && typeof item === 'object' ? String(item.text ? item.text : '') : String(item ? item : '');
+      const isScriptNote = shouldCleanScript && /mensaje\s*\/\s*guion\s*:/i.test(txt);
+      const matchesPattern = removeList.some((pat) => txt.toLowerCase().includes(pat));
+      if ((isScriptNote ? true : matchesPattern) && item && item.id) {
+        await removeQuickNoteFromLead(lead.id, activeCid, item.id);
+        modified = true;
+      } else {
+        keptNotes.push(item);
+      }
+    }
+    existingNotes = keptNotes;
+  }
+
   const rawNotesToAdd = [];
   if (patch.note && String(patch.note).trim()) { rawNotesToAdd.push(String(patch.note).trim()); }
   if (Array.isArray(patch.quickNotes)) {

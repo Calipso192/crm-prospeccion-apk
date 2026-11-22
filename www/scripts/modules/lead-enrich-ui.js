@@ -176,9 +176,22 @@ function checkNativePermissionsPrompt() {
 }
 
 export function initCapacitorAndSw(onAutoSync, onFocusLead) {
+  const cap = typeof window !== 'undefined' ? window.Capacitor : null;
+  const isNativeCap = Boolean(cap && (typeof cap.isNativePlatform === 'function' ? cap.isNativePlatform() : cap.Plugins));
   if ('serviceWorker' in navigator) {
-    const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
-    if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
+    if (isNativeCap) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => r.unregister().catch(() => {}));
+      }).catch(() => {});
+      if (typeof caches !== 'undefined') {
+        caches.keys().then((keys) => {
+          keys.forEach((k) => caches.delete(k).catch(() => {}));
+        }).catch(() => {});
+      }
+    } else {
+      const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
+      if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
+    }
   }
   checkNativePermissionsPrompt();
   document.addEventListener('visibilitychange', () => {

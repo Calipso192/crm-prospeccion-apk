@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v15';
+const CACHE_NAME = 'crm-prospeccion-v16';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
