@@ -346,6 +346,7 @@ export function updateLeadEnrichFields(leadId, campaignId, patch) {
   return updateCampaignState(leadId, campaignId, (cs, record) => {
     if (patch.rubro !== undefined) { record.rubro = normalizeRubro(patch.rubro); }
     if (patch.instagram !== undefined) { record.instagram = normalizeInstagram(patch.instagram); }
+    if (patch.baseNotes !== undefined) { record.baseNotes = patch.baseNotes ? String(patch.baseNotes).trim() : ''; }
     if (patch.score !== undefined) { cs.score = normalizeScore(patch.score); }
     if (patch.contactMethod !== undefined) { cs.contactMethod = normalizeContactMethod(patch.contactMethod); }
   });

@@ -1,22 +1,8 @@
 import {
-  getAllLeads,
-  mergeImportedLeads,
-  bulkInsertLeads,
-  updateLeadCampaignStage,
-  updateLeadEnrichFields,
-  toggleInterestTag,
-  updateLeadReminder,
-  updateLeadSuggestedMessage,
-  addQuickNoteToLead,
-  normalizePhone,
-  normalizeInstagram
+  getAllLeads, mergeImportedLeads, bulkInsertLeads, updateLeadCampaignStage, updateLeadEnrichFields,
+  toggleInterestTag, updateLeadReminder, updateLeadSuggestedMessage, addQuickNoteToLead, normalizePhone, normalizeInstagram
 } from './db-service.js';
-import {
-  normalizeScore,
-  normalizeContactMethod,
-  normalizeRubro,
-  isDuplicateNote
-} from './lead-enrich-schema.js';
+import { normalizeScore, normalizeContactMethod, normalizeRubro, isDuplicateNote } from './lead-enrich-schema.js';
 import { getActiveCampaignId, setActiveCampaign, getCampaigns, mergeCampaigns, mergeTemplates } from './template-service.js';
 import { getInterestTagsCatalog, mergeInterestTagsCatalog } from './phase-engine.js';
 import { mergeChannelStats } from './channel-service.js';
@@ -129,6 +115,12 @@ async function applyPatchItem(lead, patch, activeCid, catalog) {
     const cleanIg = normalizeInstagram(patch.instagram !== undefined ? patch.instagram : patch.ig);
     if (cleanIg) { enrichPatch.instagram = cleanIg; }
   }
+  const rawBaseScript = patch.baseNotes !== undefined
+    ? patch.baseNotes
+    : (patch.guion !== undefined ? patch.guion : (patch.script !== undefined ? patch.script : (patch.mensaje !== undefined ? patch.mensaje : undefined)));
+  if (rawBaseScript !== undefined && String(rawBaseScript).trim()) {
+    enrichPatch.baseNotes = String(rawBaseScript).trim();
+  }
   if (Object.keys(enrichPatch).length > 0) {
     await updateLeadEnrichFields(lead.id, activeCid, enrichPatch);
     modified = true;
@@ -172,6 +164,14 @@ async function applyPatchItem(lead, patch, activeCid, catalog) {
 
   for (let nIdx = 0; nIdx < rawNotesToAdd.length; nIdx += 1) {
     const noteBody = rawNotesToAdd[nIdx];
+    if (/mensaje\s*\/\s*guion\s*:/i.test(noteBody)) {
+      const cleanScript = noteBody.replace(/^\[\d{2,4}[/-]\d{2}(?:[/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?\]\s*/g, '').replace(/^mensaje\s*\/\s*guion\s*:\s*/i, '').trim();
+      if (cleanScript) {
+        await updateLeadEnrichFields(lead.id, activeCid, { baseNotes: cleanScript });
+        modified = true;
+      }
+      continue;
+    }
     if (isDuplicateNote(existingNotes, noteBody)) { continue; }
     const stamp = formatPatchNoteDate(new Date());
     const hasStamp = /^\[\d{2,4}[/-]\d{2}/.test(noteBody);
@@ -239,17 +239,22 @@ export async function applyJarvisPatchPayload(rawText) {
       const pName = patch && (patch.name || patch.nombre) ? String(patch.name || patch.nombre).trim() : '';
       const pPhone = normalizePhone(patch && (patch.phone || patch.telefono));
       const pIg = normalizeInstagram(patch && (patch.instagram || patch.ig));
-      if (pName && (pPhone.length >= 7 || pIg.length >= 2)) {
+      if (pName && (pPhone.length >= 7 ? true : pIg.length >= 2)) {
+        const pScript = patch.baseNotes ? patch.baseNotes : (patch.guion ? patch.guion : (patch.script ? patch.script : (patch.mensaje ? patch.mensaje : (patch.suggestedMessage ? patch.suggestedMessage : ''))));
+        const pNote = patch.note ? String(patch.note).trim() : '';
+        const isScriptNote = pNote && /mensaje\s*\/\s*guion\s*:/i.test(pNote);
+        const cleanBase = pScript ? String(pScript).trim() : (isScriptNote ? pNote.replace(/^\[\d{2,4}[/-]\d{2}(?:[/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?\]\s*/g, '').replace(/^mensaje\s*\/\s*guion\s*:\s*/i, '').trim() : '');
         toInsert.push({
           name: pName,
           phone: pPhone,
           instagram: pIg,
           rubro: normalizeRubro(patch.rubro),
-          stage: patch.stage || 'nuevo',
+          stage: patch.stage ? patch.stage : 'nuevo',
           score: normalizeScore(patch.score),
-          contactMethod: normalizeContactMethod(patch.contactMethod || patch.contact_method || patch.recommendedChannel),
+          contactMethod: normalizeContactMethod(patch.contactMethod ? patch.contactMethod : (patch.contact_method ? patch.contact_method : patch.recommendedChannel)),
           suggestedMessage: patch.suggestedMessage ? String(patch.suggestedMessage).trim() : '',
-          quickNotes: patch.note ? [{ text: String(patch.note).trim(), createdAt: Date.now() }] : []
+          baseNotes: cleanBase,
+          quickNotes: (!isScriptNote && pNote) ? [{ text: pNote, createdAt: Date.now() }] : []
         });
         if (String(patch.stage || '').trim().toLowerCase() === 'descartado') { discarded += 1; }
       } else if (!(patch && (patch.force_backup === true || patch.activeCampaignId))) {

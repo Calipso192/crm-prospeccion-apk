@@ -150,12 +150,34 @@ export function parseNightBatchJson(rawJsonText, defaultRubro) {
     const channelUsed = mapChannelAlias(item.channelUsed || item.channel || item.canal || item.suggestedChannel || '');
     const contactMethod = normalizeContactMethod(item.contactMethod || item.contact_method || item.recommendedChannel || item.canalRecomendado || channelUsed);
     const score = normalizeScore(item.score);
-    const stage = normalizeStatus(item.stage || item.status || 'nuevo');
-    const baseNotes = String(item.baseNotes || item.notes || '').trim();
-    const singleNote = String(item.note || item.nota || '').trim();
-    const quickNotes = Array.isArray(item.quickNotes) ? item.quickNotes.slice() : [];
+    const stage = normalizeStatus(item.stage ? item.stage : (item.status ? item.status : 'nuevo'));
+    const rawScript = item.script ? item.script : (item.guion ? item.guion : (item.mensaje ? item.mensaje : (item.message ? item.message : '')));
+    let baseNotes = String(item.baseNotes ? item.baseNotes : (item.notes ? item.notes : '')).trim();
+    const singleNote = String(item.note ? item.note : (item.nota ? item.nota : '')).trim();
+    const rawQuickNotes = Array.isArray(item.quickNotes) ? item.quickNotes.slice() : [];
+    const quickNotes = [];
+
+    if (!baseNotes && rawScript && String(rawScript).trim()) {
+      baseNotes = String(rawScript).trim();
+    }
     if (singleNote) {
-      quickNotes.unshift({ text: singleNote, createdAt: Date.now() });
+      if (/mensaje\s*\/\s*guion\s*:/i.test(singleNote) && !baseNotes) {
+        baseNotes = singleNote.replace(/^\[\d{2,4}[/-]\d{2}(?:[/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?\]\s*/g, '').replace(/^mensaje\s*\/\s*guion\s*:\s*/i, '').trim();
+      } else {
+        quickNotes.unshift({ text: singleNote, createdAt: Date.now() });
+      }
+    }
+    rawQuickNotes.forEach((qn) => {
+      const txt = qn && typeof qn === 'object' ? qn.text : qn;
+      if (txt && /mensaje\s*\/\s*guion\s*:/i.test(String(txt)) && !baseNotes) {
+        baseNotes = String(txt).replace(/^\[\d{2,4}[/-]\d{2}(?:[/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?\]\s*/g, '').replace(/^mensaje\s*\/\s*guion\s*:\s*/i, '').trim();
+      } else if (qn) {
+        quickNotes.push(qn);
+      }
+    });
+    const cleanSuggested = item.suggestedMessage ? String(item.suggestedMessage).trim() : '';
+    if (!baseNotes && cleanSuggested) {
+      baseNotes = cleanSuggested;
     }
     const interestTags = Array.isArray(item.interestTags)
       ? item.interestTags.map((t) => (typeof t === 'object' ? t : { id: 'int_' + String(t).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'), label: String(t).trim() })).filter((t) => t.id && t.label)

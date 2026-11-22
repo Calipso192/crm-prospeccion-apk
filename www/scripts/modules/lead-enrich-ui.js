@@ -103,16 +103,92 @@ export function createScorePickerController(modalEl, titleEl, chipsEl, inputEl, 
   return { open, bind, close };
 }
 
+function ensurePermissionPromptModal() {
+  let modal = document.getElementById('native-perm-modal');
+  if (modal) { return modal; }
+  modal = document.createElement('div');
+  modal.id = 'native-perm-modal';
+  modal.className = 'modal hidden';
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  const title = document.createElement('h3');
+  title.id = 'native-perm-title';
+  const msg = document.createElement('p');
+  msg.id = 'native-perm-msg';
+  msg.className = 'helper-hint';
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const btnLater = document.createElement('button');
+  btnLater.type = 'button';
+  btnLater.id = 'btn-native-perm-later';
+  btnLater.className = 'btn-secondary';
+  btnLater.textContent = 'Después';
+  const btnActivate = document.createElement('button');
+  btnActivate.type = 'button';
+  btnActivate.id = 'btn-native-perm-activate';
+  btnActivate.className = 'btn-whatsapp';
+  btnActivate.textContent = 'Activar ahora';
+  actions.appendChild(btnLater);
+  actions.appendChild(btnActivate);
+  card.appendChild(title);
+  card.appendChild(msg);
+  card.appendChild(actions);
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function checkNativePermissionsPrompt() {
+  const bridge = typeof window !== 'undefined' ? window.CrmNativePerms : null;
+  if (!bridge) { return; }
+  const needsFiles = typeof bridge.hasAllFilesPermission === 'function' && !bridge.hasAllFilesPermission();
+  const needsNotif = typeof bridge.hasNotificationPermission === 'function' && !bridge.hasNotificationPermission();
+  const existing = document.getElementById('native-perm-modal');
+  if (!needsFiles && !needsNotif) {
+    if (existing) { existing.classList.add('hidden'); }
+    return;
+  }
+  if (sessionStorage.getItem('crm_perm_dismissed') === '1') { return; }
+  const modal = ensurePermissionPromptModal();
+  const titleEl = document.getElementById('native-perm-title');
+  const msgEl = document.getElementById('native-perm-msg');
+  const btnActivate = document.getElementById('btn-native-perm-activate');
+  const btnLater = document.getElementById('btn-native-perm-later');
+  titleEl.textContent = needsFiles ? 'Permiso de archivos requerido' : 'Permiso de notificaciones requerido';
+  msgEl.textContent = needsFiles
+    ? 'Por favor activa "Acceso a todos los archivos" para que CRM BLAP sincronice tus prospectos desde BLAP-Sync automáticamente.'
+    : 'Por favor activa las notificaciones para recibir tus recordatorios de seguimiento.';
+  btnActivate.onclick = () => {
+    modal.classList.add('hidden');
+    if (needsFiles && typeof bridge.openAllFilesSettings === 'function') {
+      bridge.openAllFilesSettings();
+      return;
+    }
+    if (needsNotif && typeof bridge.requestNotificationPermission === 'function') {
+      bridge.requestNotificationPermission();
+    }
+  };
+  btnLater.onclick = () => {
+    sessionStorage.setItem('crm_perm_dismissed', '1');
+    modal.classList.add('hidden');
+  };
+  modal.classList.remove('hidden');
+}
+
 export function initCapacitorAndSw(onAutoSync, onFocusLead) {
   if ('serviceWorker' in navigator) {
     const reg = () => navigator.serviceWorker.register('./sw.js').catch(() => {});
     if (document.readyState === 'complete') { reg(); } else { window.addEventListener('load', reg); }
   }
+  checkNativePermissionsPrompt();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { checkNativePermissionsPrompt(); }
+  });
   const plugins = typeof window !== 'undefined' && window.Capacitor ? window.Capacitor.Plugins : null;
   if (!plugins) { return; }
   if (plugins.App && typeof plugins.App.addListener === 'function') {
     plugins.App.addListener('appUrlOpen', (ev) => {
-      if (ev && String(ev.url || '').startsWith('crmblap://autosync') && onAutoSync) { onAutoSync(); }
+      if (ev && String(ev.url ? ev.url : '').startsWith('crmblap://autosync') && onAutoSync) { onAutoSync(); }
     });
   }
   if (plugins.LocalNotifications && typeof plugins.LocalNotifications.addListener === 'function') {

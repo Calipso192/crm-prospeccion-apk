@@ -161,8 +161,9 @@ const listRenderer = createListRenderer({ leadsList: dom.leadsList }, state, (wa
   onQuickStatus: withMutable((lead) => modalsCtrl.openQuickStatusModal(lead)),
   onWhatsApp: (lead) => openTemplatePicker(lead),
   onInstagram: async (lead) => {
-    const copied = await waMod.copySuggestedMessage(lead);
-    runChannelTouch(lead, 'instagram', waMod.openInstagramProfile, copied ? 'Mensaje Jarvis copiado · Instagram DM' : 'Instagram DM abierto');
+    const msg = waMod.getOutboundMessage(lead);
+    const copied = await waMod.copyTextToClipboard(msg);
+    runChannelTouch(lead, 'instagram', waMod.openInstagramProfile, copied ? 'Mensaje copiado al portapapeles. Pégalo en el DM' : 'Instagram DM abierto');
   },
   onCall: (lead) => runChannelTouch(lead, 'llamada', waMod.openPhoneCall, 'Llamada iniciada'),
   onSearch: (lead) => waMod.searchProspectOnline(lead),
@@ -359,10 +360,11 @@ async function launchWhatsAppWithText(lead, customText, tpl) {
   dom.pickerModal.classList.add('hidden');
   if (!(await ensureCampaignMutable())) { return; }
   const waModule = await import('./services/whatsapp-service.js');
-  if (!waModule.openWhatsAppChat(lead, customText)) { return; }
+  const finalMsg = (customText !== undefined && customText !== null && String(customText).trim()) ? String(customText).trim() : waModule.getOutboundMessage(lead);
+  await waModule.copyTextToClipboard(finalMsg);
+  if (!waModule.openWhatsAppChat(lead, finalMsg)) { return; }
   const pending = {
-    leadId: lead.id, leadName: lead.name,
-    currentStage: lead.stage ? lead.stage : lead.status,
+    leadId: lead.id, leadName: lead.name, currentStage: lead.stage ? lead.stage : lead.status,
     campaignId: lead.campaignId, waLineUsed: getActiveWaLine(),
     tpl: tpl && tpl.id ? { id: tpl.id, label: tpl.label, phase: Number(tpl.phase) > 0 ? Number(tpl.phase) : 0 } : null
   };
@@ -377,21 +379,24 @@ async function openTemplatePicker(lead) {
   dom.pickerLeadName.textContent = lead.name;
   renderPickerWaLines();
   dom.pickerButtonsList.innerHTML = '';
-
-  if (lead.suggestedMessage) {
-    const jBtn = document.createElement('button');
-    jBtn.type = 'button'; jBtn.className = 'btn-whatsapp'; jBtn.textContent = 'Mensaje Jarvis Listo';
-    jBtn.addEventListener('click', () => launchWhatsAppWithText(lead, lead.suggestedMessage, null));
-    dom.pickerButtonsList.appendChild(jBtn);
+  const addPickerBtn = (label, cls, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = cls; b.textContent = label;
+    b.addEventListener('click', onClick);
+    dom.pickerButtonsList.appendChild(b);
+  };
+  const waModule = await import('./services/whatsapp-service.js');
+  const notesMsg = waModule.getNotesOutboundMessage(lead);
+  if (notesMsg) { addPickerBtn('Mensaje de Notas (Guion)', 'btn-whatsapp', () => launchWhatsAppWithText(lead, notesMsg, null)); }
+  if (lead.suggestedMessage && String(lead.suggestedMessage).trim() !== notesMsg) {
+    addPickerBtn('Mensaje Jarvis Listo', 'btn-whatsapp', () => launchWhatsAppWithText(lead, lead.suggestedMessage, null));
   }
-
   const tplModule = await import('./services/template-service.js');
   const templates = tplModule.getTemplates().slice().sort((a, b) => {
     const scoreA = (a.phase === phaseInfo.suggestedPhase ? 2 : 0) + (a.rubro && a.rubro === lead.rubro ? 1 : 0);
     const scoreB = (b.phase === phaseInfo.suggestedPhase ? 2 : 0) + (b.rubro && b.rubro === lead.rubro ? 1 : 0);
     return scoreB - scoreA;
   });
-
   const eligible = templates.filter((tpl) => !(tpl.rubro && lead.rubro && tpl.rubro !== lead.rubro));
   if (eligible.length === 0) {
     const hint = document.createElement('p');
@@ -399,12 +404,7 @@ async function openTemplatePicker(lead) {
     hint.textContent = 'No hay plantillas en esta campaña. Usa "Mensajes" para crear una o envía mensaje libre.';
     dom.pickerButtonsList.appendChild(hint);
   } else {
-    eligible.forEach((tpl) => {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary'; btn.textContent = tpl.label;
-      btn.addEventListener('click', () => launchWhatsAppWithText(lead, tplModule.renderTemplateText(tpl.text, lead), tpl));
-      dom.pickerButtonsList.appendChild(btn);
-    });
+    eligible.forEach((tpl) => addPickerBtn(tpl.label, tpl.phase === phaseInfo.suggestedPhase ? 'btn-whatsapp' : 'btn-secondary', () => launchWhatsAppWithText(lead, tplModule.renderTemplateText(tpl.text, lead), tpl)));
   }
   dom.pickerModal.classList.remove('hidden');
 }
