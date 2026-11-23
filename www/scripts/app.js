@@ -7,8 +7,10 @@ import { projectLeadForCampaign } from './services/lead-schema.js';
 import { evaluateLeadPhase, getInterestTagsCatalog } from './services/phase-engine.js';
 import { scheduleNativeReminder, cancelNativeReminder } from './services/reminder-service.js';
 import {
-  getActiveWaLine, setActiveWaLine, getWaLineLabel, incrementDailyChannel, getChannelSnapshot
+  getActiveWaLine, setActiveWaLine, getWaLineLabel, incrementDailyChannel,
+  getChannelSnapshot, applyOneTimeIgCounterFix20261122
 } from './services/channel-service.js';
+import { createInstagramReturnController } from './modules/instagram-return-modal.js';
 import { renderDashboardView } from './modules/dashboard-view.js';
 import { createCalendarScheduler } from './modules/calendar-scheduler.js';
 import { createCampaignController } from './modules/campaign-controller.js';
@@ -142,6 +144,8 @@ async function runChannelTouch(lead, channelKey, openFn, toastPrefix) {
   showAppToast(toastPrefix + ' · ' + count + ' hoy', false);
 }
 
+const igReturnCtrl = createInstagramReturnController({ onRefreshLeads: () => refreshLeads(), onShowToast: (msg, isErr) => showAppToast(msg, isErr) });
+
 const scorePickerCtrl = createScorePickerController(
   $('score-picker-modal'), $('score-picker-title'), $('score-picker-chips'),
   $('score-picker-input'), $('btn-score-save'), $('btn-score-clear'), $('btn-score-cancel'),
@@ -160,11 +164,7 @@ const listRenderer = createListRenderer({ leadsList: dom.leadsList }, state, (wa
   })),
   onQuickStatus: withMutable((lead) => modalsCtrl.openQuickStatusModal(lead)),
   onWhatsApp: (lead) => openTemplatePicker(lead),
-  onInstagram: async (lead) => {
-    const msg = waMod.getOutboundMessage(lead);
-    const copied = await waMod.copyTextToClipboard(msg);
-    runChannelTouch(lead, 'instagram', waMod.openInstagramProfile, copied ? 'Mensaje copiado al portapapeles. Pégalo en el DM' : 'Instagram DM abierto');
-  },
+  onInstagram: withMutable((lead) => igReturnCtrl.launch(lead)),
   onCall: (lead) => runChannelTouch(lead, 'llamada', waMod.openPhoneCall, 'Llamada iniciada'),
   onSearch: (lead) => waMod.searchProspectOnline(lead),
   onOpenReminderModal: withMutable((lead) => modalsCtrl.openReminderModalForLead(lead)),
@@ -410,7 +410,7 @@ async function openTemplatePicker(lead) {
 }
 
 function bindEvents() {
-  scheduler.bind(); campaignCtrl.bind(); selectionCtrl.bind(); modalsCtrl.bind(); scorePickerCtrl.bind();
+  scheduler.bind(); campaignCtrl.bind(); selectionCtrl.bind(); modalsCtrl.bind(); scorePickerCtrl.bind(); igReturnCtrl.bind();
   const cmFilter = $('contact-method-filter');
   if (cmFilter) { cmFilter.addEventListener('change', async () => { state.contactMethod = cmFilter.value; await renderActiveView(); }); }
   const sortFilter = $('sort-order-filter');
@@ -482,6 +482,7 @@ async function triggerSilentBlapSync() {
 }
 
 async function initApp() {
+  applyOneTimeIgCounterFix20261122();
   initCapacitorAndSw(triggerSilentBlapSync, async (leadId) => {
     state.filter = 'todos'; state.queueFilter = ''; await switchView('leads'); await listRenderer.focusLeadById(leadId);
   });
@@ -491,7 +492,7 @@ async function initApp() {
   await syncStoredTagLabels();
   await campaignCtrl.refreshFilterDropdown();
   await refreshLeads();
-  restorePendingWhatsApp();
+  restorePendingWhatsApp(); igReturnCtrl.restorePending(state.masterLeads);
   await triggerSilentBlapSync();
 }
 

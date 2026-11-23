@@ -214,3 +214,26 @@ export function mergeChannelStats(incomingStats) {
   writeChannelStore(current);
   return current;
 }
+
+const IG_FIX_20261122_KEY = 'crm_ig_fix_20261122_done';
+
+export function applyOneTimeIgCounterFix20261122() {
+  if (typeof localStorage === 'undefined') {
+    return false;
+  }
+  try {
+    if (localStorage.getItem(IG_FIX_20261122_KEY) === '1') {
+      return false;
+    }
+    const store = readChannelStore();
+    const targetDay = '2026-11-22';
+    if (store.dailyChannels[targetDay] && store.dailyChannels[targetDay].instagram > 6) {
+      store.dailyChannels[targetDay].instagram = 6;
+      writeChannelStore(store);
+    }
+    localStorage.setItem(IG_FIX_20261122_KEY, '1');
+    return true;
+  } catch (error) {
+    return false;
+  }
+}

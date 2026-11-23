@@ -1,4 +1,4 @@
-const CACHE_NAME = 'crm-prospeccion-v16';
+const CACHE_NAME = 'crm-prospeccion-v17';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -27,6 +27,7 @@ const ASSETS_TO_CACHE = [
   './scripts/modules/lead-card-badges.js',
   './scripts/modules/lead-card.js',
   './scripts/modules/lead-enrich-ui.js',
+  './scripts/modules/instagram-return-modal.js',
   './scripts/modules/interest-manager-ui.js',
   './scripts/modules/template-modal-ui.js',
   './scripts/modules/modal-tools.js',
